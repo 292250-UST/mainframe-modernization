@@ -69,7 +69,7 @@ MAX_COPY_DEPTH = 5
 COPY_PATTERN = re.compile(
     r'^\s{6,}'                      # at least 6 spaces (Area A/B)
     r'COPY(?![-\w])\s+'            # COPY keyword — NOT followed by hyphen or word char
-    r'([A-Z0-9#@$-]+)'             # copybook name (alphanumeric + special)
+    r"['\"]?([A-Z0-9#@$-]+)['\"]?" # copybook name — optional quotes around name
     r'(?:\s+IN\s+[^\s.]+)?'        # optional IN library-name (ignored)
     r'(?:\s+REPLACING\s+(.+?))?'   # optional REPLACING clause
     r'\s*\.',                       # terminating period
