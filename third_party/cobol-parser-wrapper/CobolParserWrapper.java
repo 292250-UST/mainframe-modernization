@@ -11,6 +11,8 @@ import io.proleap.cobol.asg.runner.impl.CobolParserRunnerImpl;
 import io.proleap.cobol.asg.params.impl.CobolParserParamsImpl;
 import io.proleap.cobol.asg.params.CobolParserParams;
 import io.proleap.cobol.preprocessor.CobolPreprocessor.CobolSourceFormatEnum;
+import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.Token;
 import java.io.File;
 import java.util.Arrays;
 import java.util.List;
@@ -74,7 +76,6 @@ public class CobolParserWrapper {
                         if (entry instanceof DataDescriptionEntryGroup) {
                             DataDescriptionEntryGroup grp = (DataDescriptionEntryGroup) entry;
 
-                            // PIC clause — getPictureClause() singular
                             if (grp.getPictureClause() != null) {
                                 String pic = grp.getPictureClause().getPictureString();
                                 item.append(", \"pic\": \"" + escape(pic) + "\"");
@@ -82,7 +83,6 @@ public class CobolParserWrapper {
                                 item.append(", \"pic\": null");
                             }
 
-                            // USAGE clause — getUsageClauseType()
                             if (grp.getUsageClause() != null) {
                                 item.append(", \"usage\": \"" + grp.getUsageClause().getUsageClauseType().toString() + "\"");
                             } else {
@@ -102,6 +102,45 @@ public class CobolParserWrapper {
                 sb.append(dataItems.get(i));
                 if (i < dataItems.size() - 1) sb.append(", ");
             }
+            sb.append("],\n");
+
+            // ----------------------------------------------------------------
+            // Token stream — including hidden channel tokens (comments, col 7)
+            // cu.getTokens() returns the full CommonTokenStream from ProLeap
+            // Channel 0 = default (code tokens)
+            // Channel 1+ = hidden (comments, whitespace, col 7 indicators)
+            // ----------------------------------------------------------------
+            sb.append("  \"token_stream\": [");
+            CommonTokenStream tokenStream = cu.getTokens();
+            List<String> tokenList = new ArrayList<>();
+
+            if (tokenStream != null) {
+                // Fill the stream so all tokens including hidden are accessible
+                tokenStream.fill();
+                List<Token> tokens = tokenStream.getTokens();
+
+                for (Token token : tokens) {
+                    // Skip EOF token
+                    if (token.getType() == Token.EOF) continue;
+
+                    StringBuilder tok = new StringBuilder();
+                    tok.append("{");
+                    tok.append("\"type\": " + token.getType() + ", ");
+                    tok.append("\"channel\": " + token.getChannel() + ", ");
+                    tok.append("\"line\": " + token.getLine() + ", ");
+                    tok.append("\"col\": " + token.getCharPositionInLine() + ", ");
+                    tok.append("\"text\": \"" + escape(token.getText()) + "\", ");
+                    // Channel 0 = code, Channel > 0 = hidden (comments etc.)
+                    tok.append("\"hidden\": " + (token.getChannel() != 0));
+                    tok.append("}");
+                    tokenList.add(tok.toString());
+                }
+            }
+
+            for (int i = 0; i < tokenList.size(); i++) {
+                sb.append(tokenList.get(i));
+                if (i < tokenList.size() - 1) sb.append(", ");
+            }
             sb.append("]\n");
             sb.append("}");
             System.out.println(sb.toString());
@@ -110,6 +149,10 @@ public class CobolParserWrapper {
 
     private static String escape(String s) {
         if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }

@@ -238,6 +238,23 @@ def run_batch_parse(
             output_dir=layer1_dir
         )
 
+        # Save token stream separately — too large for main artifact
+        # Hidden channel tokens (comments, col 7) are critical for spec gen
+        if "token_stream" in parse_result:
+            token_path = layer1_dir / f"{cbl_file.stem}_tokens.json"
+            token_artifact = {
+                "layer":        "L1",
+                "source_file":  cbl_file.name,
+                "token_count":  len(parse_result["token_stream"]),
+                "hidden_count": sum(1 for t in parse_result["token_stream"] if t["hidden"]),
+                "comment_count": sum(1 for t in parse_result["token_stream"]
+                                    if t["hidden"] and t["text"].strip().startswith("*")),
+                "tokens": parse_result.pop("token_stream")
+            }
+            with open(token_path, "w", encoding="utf-8") as f:
+                json.dump(token_artifact, f, indent=2)
+            logger.debug(f"Token stream saved: {token_path.name}")
+
         # -------------------------------------------------------------------
         # Step 4: Log pass/fail
         # -------------------------------------------------------------------
