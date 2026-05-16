@@ -18,14 +18,20 @@ def parse_cobol(cbl_file):
         text=True
     )
     if result.returncode == 0:
-        return json.loads(result.stdout.strip().split('\n')[-1])
+        # Filter out INFO/DEBUG log lines — keep only JSON lines
+        lines = result.stdout.strip().split('\n')
+        json_lines = [l for l in lines if not any(
+            tag in l for tag in ['[main] INFO', '[main] DEBUG', '[main] WARN']
+        )]
+        json_str = '\n'.join(json_lines)
+        return json.loads(json_str)
     else:
         return {"error": result.stderr.split('\n')[-2]}
 
 if __name__ == "__main__":
     test_file = CORPUS_DIR / "app" / "cbl" / "CBACT01C.cbl"
     result = parse_cobol(test_file)
-    print(f"Result: {result}")
+    print(json.dumps(result, indent=2))
 
     # Save to out/debug/day0_first_parse.json
     debug_dir = OUT_DIR / "debug"
@@ -33,4 +39,4 @@ if __name__ == "__main__":
     output_file = debug_dir / "day0_first_parse.json"
     with open(output_file, "w") as f:
         json.dump(result, f, indent=2)
-    print(f"Saved to: {output_file}")
+    print(f"\nSaved to: {output_file}")
