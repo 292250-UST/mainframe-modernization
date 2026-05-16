@@ -223,3 +223,7 @@ out/
 third_party/proleap-cobol-parser/target/
 venv/
 .env
+
+check_*.py
+fix_*.py
+debug_*.py
