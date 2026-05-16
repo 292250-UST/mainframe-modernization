@@ -1,5 +1,3 @@
-**Primary AI Agent:** Claude (Anthropic) via claude.ai
-
 # CardDemo Mainframe Modernization Pipeline
 
 COBOL modernization pipeline for the UST CodeCrafter Championship.  

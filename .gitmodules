@@ -1,3 +1,6 @@
 [submodule "corpus"]
 	path = corpus
 	url = https://github.com/aws-samples/aws-mainframe-modernization-carddemo
+[submodule "third_party/proleap-cobol-parser"]
+	path = third_party/proleap-cobol-parser
+	url = https://github.com/uwol/proleap-cobol-parser
