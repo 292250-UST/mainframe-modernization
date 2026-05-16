@@ -219,7 +219,8 @@ def run_batch_parse(
         # -------------------------------------------------------------------
         parse_result = parse_cobol_file(
             cbl_file=cbl_file,
-            copybook_dir=copybook_dir
+            copybook_dir=copybook_dir,
+            preprocessed_lines=preprocess_result.preprocessed_lines
         )
 
         # -------------------------------------------------------------------
@@ -276,7 +277,7 @@ def run_batch_parse(
 
     print()  # newline after progress bar
     logger.info(f"Batch parse complete: {len(passed)} passed, {len(failed)} failed")
-    
+
     # -----------------------------------------------------------------------
     # Save parse coverage report (Layer 7 honesty artifact)
     # -----------------------------------------------------------------------

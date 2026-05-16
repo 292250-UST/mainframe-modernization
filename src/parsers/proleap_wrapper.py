@@ -41,7 +41,8 @@ def parse_cobol_file(
     cbl_file: Path,
     copybook_dir: Optional[Path] = None,
     timeout_seconds: int = 120,
-    use_preprocessor: bool = True
+    use_preprocessor: bool = True,
+    preprocessed_lines: Optional[list[str]] = None
 ) -> dict:
     """
     Parse a COBOL file using ProLeap.
@@ -80,8 +81,15 @@ def parse_cobol_file(
         # and produces a flat source ProLeap can handle
         # -------------------------------------------------------------------
         if use_preprocessor:
-            processor = CopybookProcessor(copybook_dir=copybook_dir)
-            preprocess_result = processor.process(cbl_file)
+            # Use already-preprocessed lines if provided
+            # This avoids double preprocessing when called from batch_parser
+            if preprocessed_lines is not None:
+                logger.debug(f"Using provided preprocessed lines for {cbl_file.name}")
+                lines_to_parse = preprocessed_lines
+            else:
+                processor = CopybookProcessor(copybook_dir=copybook_dir)
+                preprocess_result = processor.process(cbl_file)
+                lines_to_parse = preprocess_result.preprocessed_lines
 
             # Write preprocessed source to temp file
             with tempfile.NamedTemporaryFile(
@@ -90,7 +98,7 @@ def parse_cobol_file(
                 delete=False,
                 encoding="utf-8"
             ) as tmp:
-                tmp.write("\n".join(preprocess_result.preprocessed_lines))
+                tmp.write("\n".join(lines_to_parse))
                 tmp_path = tmp.name
 
             parse_target = Path(tmp_path)
