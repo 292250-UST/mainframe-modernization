@@ -44,10 +44,17 @@ from src.utils.logger import get_logger, PipelineEventLog
 from src.parsers.proleap_wrapper import parse_cobol_file
 from src.preprocess.copybook_processor import CopybookProcessor
 
+from src.layers.l1_ast.ast_transformer import ASTTransformer
+from src.layers.l2_symbols.symbol_table import SymbolTableBuilder
+
+from src.layers.l2_symbols.paragraph_inventory import ParagraphInventoryBuilder
+
 import sys
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 from config import CORPUS_DIR, COPYBOOK_DIR, OUT_DIR
+
+
 
 logger = get_logger("parsers.batch_parser")
 
@@ -238,6 +245,35 @@ def run_batch_parse(
             output_dir=layer1_dir
         )
 
+        # -------------------------------------------------------------------
+        # Step 4: AST transformation (Layer 1 typed nodes)
+        # -------------------------------------------------------------------
+        if parse_result.get("status") == "ok":
+            transformer = ASTTransformer()
+            ast_result = transformer.transform(
+                parse_result, preprocess_result.provenance_map
+            )
+            transformer.save(ast_result, layer1_dir)
+
+            # ---------------------------------------------------------------
+            # Step 5: Symbol table (Layer 2)
+            # ---------------------------------------------------------------
+            sym_dir = output_dir / "artifacts" / "layer2"
+            sym_builder = SymbolTableBuilder()
+            sym_result = sym_builder.build(
+                parse_result, preprocess_result.provenance_map
+            )
+            sym_builder.save(sym_result, sym_dir)
+
+            # ---------------------------------------------------------------
+            # Step 6: Paragraph inventory (Layer 2)
+            # ---------------------------------------------------------------
+            para_builder = ParagraphInventoryBuilder()
+            para_result = para_builder.build(
+                parse_result, preprocess_result.provenance_map
+            )
+            para_builder.save(para_result, sym_dir)
+
         # Save token stream separately — too large for main artifact
         # Hidden channel tokens (comments, col 7) are critical for spec gen
         if "token_stream" in parse_result:
@@ -254,6 +290,8 @@ def run_batch_parse(
             with open(token_path, "w", encoding="utf-8") as f:
                 json.dump(token_artifact, f, indent=2)
             logger.debug(f"Token stream saved: {token_path.name}")
+
+        
 
         # -------------------------------------------------------------------
         # Step 4: Log pass/fail
