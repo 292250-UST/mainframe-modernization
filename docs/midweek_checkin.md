@@ -1,6 +1,6 @@
 # Mid-Week Check-In — CardDemo Modernization Pipeline
 **Date:** Monday May 18, 2026
-**Contestant:** 292250-UST
+**User Name:** 292250-UST (Amit Tewari)
 **Repo:** https://github.com/292250-UST/mainframe-modernization
 
 ---
