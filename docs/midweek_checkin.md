@@ -16,10 +16,10 @@
 | Failed | 1 |
 | Pass rate | 96.8% |
 
-**Only failure:** COACTUPC.cbl — contains template placeholders (TESTVAR1) that are not valid COBOL. Correctly rejected by ProLeap and documented as a known gap.
+**Only failure:** COACTUPC.cbl — contains template placeholders (TESTVAR1) that are not valid COBOL. Correctly rejected by ProLeap, documented as known gap.
 
 **Key engineering decisions:**
-- Preprocess-then-parse architecture: Python COPY resolver runs before ProLeap, resolving all COPY statements including quoted syntax (COPY name)
+- Preprocess-then-parse architecture: Python COPY resolver runs before ProLeap
 - 21 stub copybooks created to enable online program parsing:
   - 17 BMS-generated stubs (auto-generated from .bms source files)
   - DFHAID.cpy, DFHBMSCA.cpy (IBM CICS system stubs)
@@ -56,15 +56,26 @@
 
 **UUID scheme:** SHA-256(source_file + line + node_kind)[:32] — deterministic across pipeline runs. Verified by 4 regression tests.
 
-Paragraph inventory (sample):
+**Full Paragraph Inventory:**
 
 | Paragraph | Start | End | Statements | Complexity |
 |---|---|---|---|---|
 | 0000-ACCTFILE-OPEN | 112 | 144 | 8 | 3 |
 | 1000-ACCTFILE-GET-NEXT | 145 | 180 | 12 | 5 |
 | 1100-DISPLAY-ACCT-RECORD | 181 | 210 | 9 | 2 |
+| 1300-POPUL-ACCT-RECORD | 211 | 241 | 15 | 4 |
+| 1350-WRITE-ACCT-RECORD | 242 | 252 | 6 | 2 |
+| 1400-POPUL-ARRAY-RECORD | 253 | 262 | 7 | 2 |
+| 1450-WRITE-ARRY-RECORD | 263 | 275 | 6 | 2 |
+| 1500-POPUL-VBRC-RECORD | 276 | 286 | 7 | 2 |
+| 1550-WRITE-VB1-RECORD | 287 | 301 | 6 | 2 |
+| 1575-WRITE-VB2-RECORD | 302 | 316 | 6 | 2 |
+| 9000-ACCTFILE-CLOSE | 317 | 332 | 5 | 1 |
+| 9100-OUTFILE-OPEN | 333 | 351 | 8 | 3 |
+| 9150-ARRYFILE-OPEN | 352 | 369 | 8 | 3 |
+| 9200-VBRCFILE-OPEN | 370 | 387 | 8 | 3 |
+| 9910-DISPLAY-IO-STATUS | 388 | 467 | 18 | 9 |
 | 9999-ABEND-PROGRAM | 468 | 500 | 3 | 1 |
-| ... 12 more paragraphs | | | | |
 
 ---
 
@@ -84,27 +95,22 @@ Sample symbols:
 | ACCT-ID | 05 | 9(11) | numeric p11 s0 | CBACT01C.cbl:92 |
 | ACCT-CURR-BAL | 05 | S9(10)V99 | decimal p12 s2 signed | CVACT01Y.cpy:15 |
 | ACCT-CREDIT-LIMIT | 05 | S9(10)V99 | decimal p12 s2 signed | CVACT01Y.cpy:18 |
+| ACCT-CASH-CREDIT-LIMIT | 05 | S9(10)V99 | decimal p12 s2 signed | CVACT01Y.cpy:21 |
+| ACCT-ACTIVE-STATUS | 05 | X(01) | alphanumeric len=1 | CVACT01Y.cpy:24 |
+| ACCT-OPEN-DATE | 05 | 9(10) | numeric p10 s0 | CVACT01Y.cpy:27 |
 | WS-PGMNAME | 05 | X(08) | alphanumeric len=8 | CBACT01C.cbl:45 |
 | END-OF-FILE | 05 | X(01) | alphanumeric len=1 | CBACT01C.cbl:55 |
+| IO-STATUS | 05 | X(04) | alphanumeric len=4 | CBACT01C.cbl:62 |
+| APPL-RESULT | 05 | S9(9) COMP | binary p9 signed | CBACT01C.cbl:70 |
 
 ---
 
-## 5. Additional Parsers Complete (Day 2)
-
-| Parser | Files | Result |
-|---|---|---|
-| BMS parser | 17 | 17 mapsets, 441 named fields |
-| CSD parser | 1 | 18 programs, 18 transactions, 8 VSAM files |
-| ASM stub recognizer | 2 | COBDATFT (CSECT), MVSWAIT (START) |
-
----
-
-## 6. Assumptions and Known Gaps
+## 5. Assumptions and Known Gaps
 
 | Item | Status | Notes |
 |---|---|---|
 | COACTUPC.cbl | Gap | Template placeholders — ProLeap correctly rejects |
-| BMS copybook stubs | Assumption | Generated from .bms source — structurally correct |
+| BMS copybook stubs (17) | Assumption | Generated from .bms source — structurally correct |
 | DFHAID / DFHBMSCA | Assumption | IBM standard stubs — high accuracy |
 | EXEC SQL | Out of scope | 0 occurrences verified in corpus |
 | EXEC DLI (IMS) | Out of scope | 0 occurrences in main CardDemo programs |
