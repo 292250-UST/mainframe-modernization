@@ -876,6 +876,75 @@ document.getElementById("zg").setAttribute("transform",`translate(${{vx}},${{vy}
 </html>"""
     return HTMLResponse(content=html)
 
+@app.get("/connectivity/{program_name}")
+def get_connectivity(program_name: str):
+    """Aggregates CALL, XCTL, COPY, COMMAREA, JCL connections for one program."""
+    conn = get_db()
+    try:
+        prog = program_name.upper()
+
+        callees = conn.execute("""
+            SELECT call_target, call_type, source_file, line_num
+            FROM call_graph WHERE UPPER(caller_uuid) = ?
+            ORDER BY line_num
+        """, [prog]).fetchall()
+
+        callers = conn.execute("""
+            SELECT caller_uuid, call_type, source_file, line_num
+            FROM call_graph WHERE UPPER(call_target) = ?
+            ORDER BY line_num
+        """, [prog]).fetchall()
+
+        copybooks = conn.execute("""
+            SELECT copybook_name, source_file FROM copybook_use
+            WHERE UPPER(program_uuid) = UPPER(?)
+            ORDER BY copybook_name
+        """, [prog + ".cbl"]).fetchall()
+
+        shared = conn.execute("""
+            SELECT DISTINCT cu2.program_uuid, cu2.copybook_name
+            FROM copybook_use cu1
+            JOIN copybook_use cu2 ON cu1.copybook_name = cu2.copybook_name
+            WHERE UPPER(cu1.program_uuid) = UPPER(?)
+            AND cu2.program_uuid != cu1.program_uuid
+            ORDER BY cu2.copybook_name LIMIT 20
+        """, [prog + ".cbl"]).fetchall()
+
+        commarea = conn.execute("""
+            SELECT from_program_uuid, to_program_uuid,
+                   edge_type, transid, commarea_size, line_num
+            FROM transaction_flow
+            WHERE UPPER(from_program_uuid) = ?
+               OR UPPER(to_program_uuid) = ?
+        """, [prog, prog]).fetchall()
+
+        jobs = conn.execute("""
+            SELECT DISTINCT job_name, step_name, source_file
+            FROM jcl_job WHERE UPPER(program_name) = ?
+            ORDER BY job_name
+        """, [prog]).fetchall()
+
+        return {
+            "program": prog,
+            "connectivity_summary": {
+                "call_edges_out":        len([c for c in callees if c[1] == "CALL"]),
+                "xctl_edges_out":        len([c for c in callees if c[1] == "CICS_XCTL"]),
+                "callers":               len(callers),
+                "copybooks_used":        len(copybooks),
+                "shared_copybook_progs": len(set(r[0] for r in shared)),
+                "commarea_connections":  len(commarea),
+                "jcl_jobs":             len(jobs),
+            },
+            "calls":              [{"target": c[0], "type": c[1], "file": c[2], "line": c[3]} for c in callees],
+            "callers":            [{"caller": c[0], "type": c[1], "file": c[2], "line": c[3]} for c in callers],
+            "copybooks":          [{"name": c[0], "file": c[1]} for c in copybooks],
+            "shared_via_copybook":[{"program": r[0], "shared_copybook": r[1]} for r in shared],
+            "commarea":           [{"from": c[0], "to": c[1], "type": c[2], "transid": c[3], "commarea_size": c[4], "line": c[5]} for c in commarea],
+            "jcl_jobs":           [{"job_name": j[0], "step_name": j[1], "file": j[2]} for j in jobs],
+        }
+    finally:
+        conn.close()
+        
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
