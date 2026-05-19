@@ -223,17 +223,14 @@ def get_paragraph(uuid: str):
             ORDER BY line_num
         """, [sf, prog, sl, el]).fetchall()
 
-        # Move chains (symbols defined/used) in this paragraph
-        move_path = OUT_DIR / "artifacts" / "layer5" / "move_chains.json"
+        # Real statements from AST artifact (Layer 1)
         moves = []
-        if move_path.exists():
-            move_data = json.loads(move_path.read_text())
-            for result in move_data.get("results", []):
-                if result.get("source_file", "").upper() == sf.upper():
-                    moves = [
-                        m for m in result.get("moves", [])
-                        if m.get("paragraph", "").upper() == name.upper()
-                    ]
+        ast_path = OUT_DIR / "artifacts" / "layer1" / sf.replace(".cbl", "_ast.json")
+        if ast_path.exists():
+            ast_data = json.loads(ast_path.read_text())
+            for para_node in ast_data.get("paragraph_nodes", []):
+                if para_node.get("payload", {}).get("name", "").upper() == name.upper():
+                    moves = para_node.get("payload", {}).get("statements", [])
                     break
 
         return {
@@ -274,13 +271,13 @@ def get_paragraph(uuid: str):
                 }
                 for r in rules
             ],
-            "move_chains": [
+            "statements": [
                 {
-                    "source":  m["source"],
-                    "targets": m["targets"],
-                    "line":    m["line"],
+                    "type": m.get("type", ""),
+                    "line": m.get("line", 0),
+                    "raw":  m.get("raw", "")[:100],
                 }
-                for m in moves[:20]
+                for m in moves[:50]
             ],
         }
     finally:

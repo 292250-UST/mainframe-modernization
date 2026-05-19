@@ -152,6 +152,13 @@ def parse_cobol_file(
             parsed["copybooks_resolved"] = preprocess_result.copybooks_found
             parsed["copybooks_missing"] = preprocess_result.copybooks_missing
 
+        # paragraphs is now list of dicts {name, statements[]}
+        # Extract names for backward compatibility with all downstream code
+        para_data = parsed.get("paragraphs", [])
+        if para_data and isinstance(para_data[0], dict):
+            parsed["paragraph_statements"] = para_data  # full AST with statements
+            parsed["paragraphs"] = [p["name"] for p in para_data]  # names only — backward compat
+        
         logger.info(
             f"Parsed {cbl_file.name}: "
             f"{len(parsed.get('paragraphs', []))} paragraphs"

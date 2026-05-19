@@ -292,7 +292,8 @@ class ParagraphNode(ASTNode):
         start_line: int,
         end_line: int,
         parent_uuid: str,
-        copybook: Optional[str] = None
+        copybook: Optional[str] = None,
+        statements: list = None
     ) -> "ParagraphNode":
         """
         Factory method — create a ParagraphNode with auto-generated UUID.
@@ -324,6 +325,7 @@ class ParagraphNode(ASTNode):
                 "name":            name,
                 "statement_count": 0,   # updated by transformer
                 "complexity":      1,   # updated by CFG builder
+                "statements":      statements or [],
             }
         )
 

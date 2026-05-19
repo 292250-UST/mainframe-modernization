@@ -3,6 +3,8 @@ import io.proleap.cobol.asg.metamodel.CompilationUnit;
 import io.proleap.cobol.asg.metamodel.ProgramUnit;
 import io.proleap.cobol.asg.metamodel.procedure.ProcedureDivision;
 import io.proleap.cobol.asg.metamodel.procedure.Paragraph;
+import io.proleap.cobol.asg.metamodel.procedure.Statement;
+import io.proleap.cobol.asg.metamodel.procedure.StatementTypeEnum;
 import io.proleap.cobol.asg.metamodel.data.DataDivision;
 import io.proleap.cobol.asg.metamodel.data.workingstorage.WorkingStorageSection;
 import io.proleap.cobol.asg.metamodel.data.datadescription.DataDescriptionEntry;
@@ -43,16 +45,68 @@ public class CobolParserWrapper {
             sb.append("  \"status\": \"ok\",\n");
 
             // ----------------------------------------------------------------
-            // Paragraphs
+            // Paragraphs + statements per paragraph
             // ----------------------------------------------------------------
             sb.append("  \"paragraphs\": [");
+            List<String> paraList = new ArrayList<>();
+
             if (pu != null && pu.getProcedureDivision() != null) {
                 ProcedureDivision pd = pu.getProcedureDivision();
                 List<Paragraph> paragraphs = pd.getParagraphs();
-                for (int i = 0; i < paragraphs.size(); i++) {
-                    sb.append("\"" + escape(paragraphs.get(i).getName()) + "\"");
-                    if (i < paragraphs.size() - 1) sb.append(", ");
+
+                for (Paragraph para : paragraphs) {
+                    StringBuilder ps = new StringBuilder();
+                    ps.append("{");
+                    ps.append("\"name\": \"" + escape(para.getName()) + "\", ");
+
+                    // Extract statements per paragraph
+                    List<Statement> stmts = para.getStatements();
+                    ps.append("\"statements\": [");
+                    List<String> stmtList = new ArrayList<>();
+
+                    for (Statement stmt : stmts) {
+                        StringBuilder ss = new StringBuilder();
+                        ss.append("{");
+
+                        // Statement type
+                        String stmtType = "UNKNOWN";
+                        try {
+                            stmtType = stmt.getStatementType().toString();
+                        } catch (Exception e) {}
+                        ss.append("\"type\": \"" + stmtType + "\", ");
+
+                        // Line number from context
+                        int line = 0;
+                        try {
+                            line = stmt.getCtx().getStart().getLine();
+                        } catch (Exception e) {}
+                        ss.append("\"line\": " + line + ", ");
+
+                        // Raw text from context
+                        String raw = "";
+                        try {
+                            raw = stmt.getCtx().getText();
+                            if (raw.length() > 200) raw = raw.substring(0, 200);
+                        } catch (Exception e) {}
+                        ss.append("\"raw\": \"" + escape(raw) + "\"");
+
+                        ss.append("}");
+                        stmtList.add(ss.toString());
+                    }
+
+                    for (int i = 0; i < stmtList.size(); i++) {
+                        ps.append(stmtList.get(i));
+                        if (i < stmtList.size() - 1) ps.append(", ");
+                    }
+                    ps.append("]");
+                    ps.append("}");
+                    paraList.add(ps.toString());
                 }
+            }
+
+            for (int i = 0; i < paraList.size(); i++) {
+                sb.append(paraList.get(i));
+                if (i < paraList.size() - 1) sb.append(", ");
             }
             sb.append("],\n");
 
@@ -105,22 +159,17 @@ public class CobolParserWrapper {
             sb.append("],\n");
 
             // ----------------------------------------------------------------
-            // Token stream — including hidden channel tokens (comments, col 7)
-            // cu.getTokens() returns the full CommonTokenStream from ProLeap
-            // Channel 0 = default (code tokens)
-            // Channel 1+ = hidden (comments, whitespace, col 7 indicators)
+            // Token stream
             // ----------------------------------------------------------------
             sb.append("  \"token_stream\": [");
             CommonTokenStream tokenStream = cu.getTokens();
             List<String> tokenList = new ArrayList<>();
 
             if (tokenStream != null) {
-                // Fill the stream so all tokens including hidden are accessible
                 tokenStream.fill();
                 List<Token> tokens = tokenStream.getTokens();
 
                 for (Token token : tokens) {
-                    // Skip EOF token
                     if (token.getType() == Token.EOF) continue;
 
                     StringBuilder tok = new StringBuilder();
@@ -130,7 +179,6 @@ public class CobolParserWrapper {
                     tok.append("\"line\": " + token.getLine() + ", ");
                     tok.append("\"col\": " + token.getCharPositionInLine() + ", ");
                     tok.append("\"text\": \"" + escape(token.getText()) + "\", ");
-                    // Channel 0 = code, Channel > 0 = hidden (comments etc.)
                     tok.append("\"hidden\": " + (token.getChannel() != 0));
                     tok.append("}");
                     tokenList.add(tok.toString());

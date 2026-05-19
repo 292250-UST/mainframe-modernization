@@ -96,6 +96,9 @@ class ASTTransformer:
         source_file   = parse_result.get("source_file", "UNKNOWN.cbl")
         program_name  = parse_result.get("program", source_file.replace(".cbl","").replace(".CBL",""))
         paragraphs    = parse_result.get("paragraphs", [])
+        para_stmts    = parse_result.get("paragraph_statements", [])
+        # Build lookup: para_name -> statements[]
+        stmt_lookup   = {p["name"]: p.get("statements", []) for p in para_stmts} if para_stmts else {}
         total_lines   = provenance_map.summary()["total_lines"] if provenance_map else 0
         copybooks     = provenance_map.get_copybooks_used() if provenance_map else []
 
@@ -130,6 +133,7 @@ class ASTTransformer:
 
             para_node = ParagraphNode.create(
                 name=para_name,
+                statements=stmt_lookup.get(para_name, []),
                 source_file=source_file,
                 start_line=start_line,
                 end_line=end_line,
