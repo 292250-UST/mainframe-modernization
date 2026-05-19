@@ -27,6 +27,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
+from fastapi.responses import HTMLResponse
 
 import sys
 ROOT = Path(__file__).parent.parent.parent
@@ -638,11 +639,242 @@ def get_business_rules(program_uuid: str):
                 for r in rows
             ],
             "count": len(rows),
-            "note": "Business rules extraction in progress (Day 6)"
+            "note": "Business rules extracted via IF/EVALUATE analysis"
         }
     finally:
         conn.close()
 
+@app.get("/cfg/{program_name}", response_class=HTMLResponse)
+def get_cfg_visual(program_name: str):
+    """
+    Returns an interactive CFG visualization as HTML.
+    Open in browser: http://localhost:8000/cfg/COTRN02C
+    """
+    conn = get_db()
+    try:
+        prog = program_name.upper()
+
+        # Get paragraphs
+        paras = conn.execute("""
+            SELECT name, start_line, end_line, statement_count, complexity
+            FROM paragraphs
+            WHERE UPPER(source_file) = UPPER(?)
+            ORDER BY start_line
+        """, [prog + ".cbl"]).fetchall()
+
+        if not paras:
+            raise HTTPException(status_code=404, detail=f"Program '{program_name}' not found")
+
+        # Get CFG edges
+        edges = conn.execute("""
+            SELECT from_uuid, to_uuid, edge_type, condition, line_num
+            FROM control_flow
+            WHERE UPPER(source_file) = UPPER(?)
+            ORDER BY line_num
+        """, [prog + ".cbl"]).fetchall()
+
+        # Get program metadata
+        meta = conn.execute("""
+            SELECT payload_json FROM nodes
+            WHERE kind = 'ProgramNode'
+            AND UPPER(source_file) = UPPER(?)
+            LIMIT 1
+        """, [prog + ".cbl"]).fetchone()
+
+        payload = json.loads(meta[0]) if meta else {}
+        prog_type = payload.get("program_type", "batch").upper()
+        total_lines = payload.get("total_lines", 0)
+
+    finally:
+        conn.close()
+
+    # Build JS data
+    para_js = json.dumps([
+        {
+            "name":  p[0],
+            "lines": f"{p[1]}-{p[2]}",
+            "stmts": p[3],
+            "cx":    p[4],
+            "type":  ("main" if i == 0
+                      else "screen" if any(k in p[0] for k in ["SEND","RECEIVE","SCREEN","RETURN"])
+                      else "error" if any(k in p[0] for k in ["ABEND","ERROR","9999"])
+                      else "process")
+        }
+        for i, p in enumerate(paras)
+    ])
+
+    edge_js = json.dumps([
+        {
+            "from": e[0],
+            "to":   e[1],
+            "type": e[2],
+            "condition": e[3],
+            "line": e[4],
+        }
+        for e in edges
+    ])
+
+    total_cx = max((p[4] for p in paras), default=1)
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CFG - {prog}</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0a0e1a;font-family:'Courier New',monospace;color:#e2e8f0;overflow:hidden}}
+#header{{padding:12px 20px;background:rgba(10,14,26,0.95);border-bottom:1px solid #1e3a5f;display:flex;align-items:center;gap:16px}}
+#header h1{{font-size:14px;font-weight:700;color:#60a5fa;letter-spacing:2px}}
+.badge{{padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:1px}}
+.badge-t{{background:#0f4c2a;color:#4ade80;border:1px solid #166534}}
+.badge-e{{background:#1e3a5f;color:#60a5fa;border:1px solid #1d4ed8}}
+.meta{{font-size:11px;color:#64748b}}
+#info{{position:fixed;top:52px;right:20px;background:rgba(15,20,35,0.95);border:1px solid #1e3a5f;border-radius:6px;padding:12px 16px;font-size:10px;width:180px;z-index:100}}
+#info h3{{color:#60a5fa;margin-bottom:8px;letter-spacing:1px}}
+.sr{{display:flex;justify-content:space-between;margin:3px 0}}
+.sl{{color:#64748b}}.sv{{color:#e2e8f0;font-weight:700}}
+#legend{{position:fixed;bottom:20px;left:20px;background:rgba(15,20,35,0.95);border:1px solid #1e3a5f;border-radius:6px;padding:12px 16px;font-size:10px;z-index:100}}
+#legend h3{{color:#60a5fa;margin-bottom:8px;font-size:10px;letter-spacing:1px}}
+.lr{{display:flex;align-items:center;gap:8px;margin:4px 0;color:#94a3b8}}
+.ll{{width:24px;height:2px}}
+.ln{{width:12px;height:12px;border-radius:2px}}
+#tt{{position:fixed;background:rgba(15,20,40,0.98);border:1px solid #2563eb;border-radius:6px;padding:10px 14px;font-size:11px;pointer-events:none;z-index:200;display:none}}
+#tt .tn{{color:#60a5fa;font-weight:700;margin-bottom:4px}}
+#tt .tr{{color:#94a3b8;margin:2px 0}}
+#tt .tr span{{color:#e2e8f0}}
+svg{{position:fixed;top:44px;left:0;right:0;bottom:0;width:100%;height:calc(100vh - 44px)}}
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>CFG &mdash; {prog}</h1>
+  <span class="badge badge-t">{prog_type}</span>
+  <span class="badge badge-e">{len(edges)} EDGES</span>
+  <span class="meta">{len(paras)} paragraphs &middot; complexity={total_cx} &middot; {total_lines} lines</span>
+</div>
+<div id="info">
+  <h3>PROGRAM STATS</h3>
+  <div class="sr"><span class="sl">Type</span><span class="sv">{prog_type}</span></div>
+  <div class="sr"><span class="sl">Lines</span><span class="sv">{total_lines:,}</span></div>
+  <div class="sr"><span class="sl">Paragraphs</span><span class="sv">{len(paras)}</span></div>
+  <div class="sr"><span class="sl">CFG Edges</span><span class="sv">{len(edges)}</span></div>
+  <div class="sr"><span class="sl">Max Complexity</span><span class="sv">{total_cx}</span></div>
+</div>
+<div id="legend">
+  <h3>EDGE TYPES</h3>
+  <div class="lr"><div class="ll" style="background:#3b82f6"></div>PERFORM</div>
+  <div class="lr"><div class="ll" style="background:#f59e0b"></div>PERFORM CONDITIONAL</div>
+  <div class="lr"><div class="ll" style="background:#a855f7"></div>PERFORM UNTIL</div>
+  <div class="lr"><div class="ll" style="background:#ec4899"></div>PERFORM VARYING</div>
+  <div style="margin-top:8px;border-top:1px solid #1e3a5f;padding-top:8px">
+  <div class="lr"><div class="ln" style="background:#0f2050;border:1px solid #3b82f6"></div>Entry</div>
+  <div class="lr"><div class="ln" style="background:#1a0a35;border:1px solid #7c3aed"></div>CICS Screen</div>
+  <div class="lr"><div class="ln" style="background:#1c0a0a;border:1px solid #b91c1c"></div>Error/Abend</div>
+  <div class="lr"><div class="ln" style="background:#0a1525;border:1px solid #334155"></div>Processing</div>
+  </div>
+</div>
+<div id="tt"><div class="tn" id="ttn"></div><div class="tr">Lines: <span id="ttl"></span></div><div class="tr">Stmts: <span id="tts"></span></div><div class="tr">Complexity: <span id="ttc"></span></div></div>
+<svg id="svg">
+<defs>
+  <marker id="ab" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#3b82f6" opacity="0.8"/></marker>
+  <marker id="aa" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#f59e0b" opacity="0.8"/></marker>
+  <marker id="ap" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#a855f7" opacity="0.8"/></marker>
+  <marker id="ak" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#ec4899" opacity="0.8"/></marker>
+  <filter id="glow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<g id="zg"><g id="el"></g><g id="nl"></g></g>
+</svg>
+<script>
+const paragraphs = {para_js};
+const rawEdges   = {edge_js};
+
+// Auto-layout: grid with COLS columns
+const COLS=4, NW=190, NH=46, GX=28, GY=52, OX=40, OY=20;
+const positions={{}};
+let col=0, row=0;
+paragraphs.forEach((p,i)=>{{
+  if(i===0){{ positions[p.name]={{x:OX+1.5*(NW+GX), y:OY}}; return; }}
+  positions[p.name]={{x:OX+col*(NW+GX), y:OY+(NH+GY)*(row+1)}};
+  col++;
+  if(col>=COLS){{col=0;row++;}}
+}});
+
+const ec={{PERFORM:"#3b82f6",PERFORM_CONDITIONAL:"#f59e0b",PERFORM_UNTIL:"#a855f7",PERFORM_VARYING:"#ec4899"}};
+const em={{PERFORM:"url(#ab)",PERFORM_CONDITIONAL:"url(#aa)",PERFORM_UNTIL:"url(#ap)",PERFORM_VARYING:"url(#ak)"}};
+const ed={{PERFORM:"none",PERFORM_CONDITIONAL:"5,3",PERFORM_UNTIL:"none",PERFORM_VARYING:"2,2"}};
+const nc={{main:{{fill:"#0f2050",stroke:"#3b82f6"}},screen:{{fill:"#1a0a35",stroke:"#7c3aed"}},error:{{fill:"#1c0a0a",stroke:"#b91c1c"}},process:{{fill:"#0a1525",stroke:"#334155"}}}};
+
+const NS="http://www.w3.org/2000/svg";
+const el=document.getElementById("el"),nll=document.getElementById("nl"),tt=document.getElementById("tt");
+
+rawEdges.forEach(e=>{{
+  const fp=positions[e.from],tp=positions[e.to];
+  if(!fp||!tp)return;
+  const x1=fp.x+NW/2,y1=fp.y+NH,x2=tp.x+NW/2,y2=tp.y,cy=(y1+y2)/2;
+  const g=document.createElementNS(NS,"g");
+  const p=document.createElementNS(NS,"path");
+  p.setAttribute("d",`M ${{x1}} ${{y1}} C ${{x1}} ${{cy}}, ${{x2}} ${{cy}}, ${{x2}} ${{y2}}`);
+  p.setAttribute("fill","none");
+  p.setAttribute("stroke",ec[e.type]||"#3b82f6");
+  p.setAttribute("stroke-width","1.5");
+  p.setAttribute("stroke-dasharray",ed[e.type]||"none");
+  p.setAttribute("marker-end",em[e.type]||"url(#ab)");
+  p.setAttribute("opacity","0.55");
+  g.appendChild(p);el.appendChild(g);
+}});
+
+paragraphs.forEach((p,i)=>{{
+  const pp=positions[p.name];if(!pp)return;
+  const c=nc[p.type]||nc.process;
+  const g=document.createElementNS(NS,"g");
+  g.setAttribute("transform",`translate(${{pp.x}},${{pp.y}})`);
+  if(i===0)g.setAttribute("filter","url(#glow)");
+  const r=document.createElementNS(NS,"rect");
+  r.setAttribute("width",NW);r.setAttribute("height",NH);r.setAttribute("rx",4);
+  r.setAttribute("fill",c.fill);r.setAttribute("stroke",c.stroke);
+  r.setAttribute("stroke-width",i===0?"2":"1");
+  const bw=Math.min((p.cx/25)*NW,NW-4);
+  const b=document.createElementNS(NS,"rect");
+  b.setAttribute("x",2);b.setAttribute("y",NH-4);b.setAttribute("width",bw);b.setAttribute("height",2);
+  b.setAttribute("rx",1);b.setAttribute("fill",p.cx>15?"#ef4444":p.cx>8?"#f59e0b":"#22c55e");b.setAttribute("opacity","0.7");
+  const t=document.createElementNS(NS,"text");
+  t.setAttribute("x",NW/2);t.setAttribute("y",18);t.setAttribute("text-anchor","middle");
+  t.setAttribute("dominant-baseline","middle");t.setAttribute("fill","#e2e8f0");
+  t.setAttribute("font-size","9.5");t.setAttribute("font-family","Courier New,monospace");
+  t.textContent=p.name.length>25?p.name.substring(0,23)+"..":p.name;
+  const m=document.createElementNS(NS,"text");
+  m.setAttribute("x",NW/2);m.setAttribute("y",34);m.setAttribute("text-anchor","middle");
+  m.setAttribute("fill","#94a3b8");m.setAttribute("font-size","8");
+  m.setAttribute("font-family","Courier New,monospace");
+  m.textContent=`stmts=${{p.stmts}} cx=${{p.cx}}`;
+  g.appendChild(r);g.appendChild(b);g.appendChild(t);g.appendChild(m);
+  g.style.cursor="pointer";
+  g.addEventListener("mouseenter",ev=>{{
+    document.getElementById("ttn").textContent=p.name;
+    document.getElementById("ttl").textContent=p.lines;
+    document.getElementById("tts").textContent=p.stmts;
+    document.getElementById("ttc").textContent=p.cx;
+    tt.style.display="block";tt.style.left=(ev.clientX+12)+"px";tt.style.top=(ev.clientY-10)+"px";
+  }});
+  g.addEventListener("mousemove",ev=>{{tt.style.left=(ev.clientX+12)+"px";tt.style.top=(ev.clientY-10)+"px";}});
+  g.addEventListener("mouseleave",()=>{{tt.style.display="none";}});
+  nll.appendChild(g);
+}});
+
+let vx=0,vy=0,sc=1,dr=false,sx,sy;
+const svg=document.getElementById("svg");
+svg.addEventListener("mousedown",e=>{{dr=true;sx=e.clientX-vx;sy=e.clientY-vy;}});
+svg.addEventListener("mousemove",e=>{{if(!dr)return;vx=e.clientX-sx;vy=e.clientY-sy;document.getElementById("zg").setAttribute("transform",`translate(${{vx}},${{vy}}) scale(${{sc}})`)}});
+svg.addEventListener("mouseup",()=>dr=false);
+svg.addEventListener("wheel",e=>{{e.preventDefault();sc=Math.max(0.3,Math.min(2.5,sc-e.deltaY*0.001));document.getElementById("zg").setAttribute("transform",`translate(${{vx}},${{vy}}) scale(${{sc}})`)}});
+const sw=window.innerWidth,gw=COLS*(NW+GX);
+vx=(sw-gw)/2-OX+20;vy=10;
+document.getElementById("zg").setAttribute("transform",`translate(${{vx}},${{vy}}) scale(${{sc}})`);
+</script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 if __name__ == "__main__":
     import uvicorn
