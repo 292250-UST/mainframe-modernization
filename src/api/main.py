@@ -125,10 +125,13 @@ def get_program(program_name: str):
         uuid, kind, source_file, start_line, end_line, payload_json = row
         payload = json.loads(payload_json) if payload_json else {}
 
-        # Get paragraph count
-        para_count = conn.execute("""
-            SELECT COUNT(*) FROM paragraphs WHERE program_uuid = ?
-        """, [uuid]).fetchone()[0]
+        # Get paragraphs with UUIDs
+        para_rows = conn.execute("""
+            SELECT uuid, name, start_line, end_line, statement_count, complexity
+            FROM paragraphs WHERE program_uuid = ?
+            ORDER BY start_line
+        """, [uuid]).fetchall()
+        para_count = len(para_rows)
 
         # Get symbol count
         sym_count = conn.execute("""
@@ -147,6 +150,17 @@ def get_program(program_name: str):
             "program_type":   payload.get("program_type", "unknown"),
             "total_lines":    end_line - start_line + 1,
             "paragraph_count": para_count,
+            "paragraphs": [
+                {
+                    "uuid":       p[0],
+                    "name":       p[1],
+                    "start_line": p[2],
+                    "end_line":   p[3],
+                    "statements": p[4],
+                    "complexity": p[5],
+                }
+                for p in para_rows
+            ],
             "symbol_count":   sym_count,
             "copybooks":      [c[0] for c in copybooks],
             "payload":        payload,
@@ -154,50 +168,120 @@ def get_program(program_name: str):
     finally:
         conn.close()
 
-
 @app.get("/paragraph/{uuid}")
 def get_paragraph(uuid: str):
-    """Get paragraph details by UUID."""
+    """
+    Get enriched paragraph AST including:
+    - Basic metadata (name, lines, statements, complexity)
+    - CFG edges (PERFORM chains from this paragraph)
+    - CICS statements in this paragraph
+    - Business rules (IF/EVALUATE) in this paragraph
+    - Symbols referenced (from move chains)
+    """
     conn = get_db()
     try:
+        # Basic paragraph data
         row = conn.execute("""
-            SELECT uuid, source_file, start_line, end_line, payload_json
-            FROM nodes WHERE uuid = ? AND kind = 'ParagraphNode'
+            SELECT uuid, source_file, start_line, end_line,
+                   statement_count, complexity, name, program_uuid
+            FROM paragraphs WHERE uuid = ?
         """, [uuid]).fetchone()
 
         if not row:
-            # Try paragraphs table
-            row2 = conn.execute("""
-                SELECT uuid, source_file, start_line, end_line,
-                       statement_count, complexity, name, payload_json
-                FROM paragraphs WHERE uuid = ?
-            """, [uuid]).fetchone()
+            raise HTTPException(status_code=404, detail=f"Paragraph '{uuid}' not found")
 
-            if not row2:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Paragraph '{uuid}' not found"
-                )
-            uuid, sf, sl, el, stmts, cx, name, payload = row2
-            return {
-                "uuid":            uuid,
-                "name":            name,
-                "source_file":     sf,
-                "start_line":      sl,
-                "end_line":        el,
-                "statement_count": stmts,
-                "complexity":      cx,
-            }
+        uuid, sf, sl, el, stmts, cx, name, prog_uuid = row
+        prog = sf.replace(".cbl", "").upper()
 
-        uuid, sf, sl, el, payload_json = row
-        payload = json.loads(payload_json) if payload_json else {}
+        # CFG edges from this paragraph
+        cfg_edges = conn.execute("""
+            SELECT from_uuid, to_uuid, edge_type, condition, line_num
+            FROM control_flow
+            WHERE UPPER(source_file) = UPPER(?)
+            AND UPPER(from_uuid) = UPPER(?)
+            ORDER BY line_num
+        """, [sf, name]).fetchall()
+
+        # CICS statements in this paragraph
+        cics_path = OUT_DIR / "artifacts" / "layer3" / "cics_statements.json"
+        cics_stmts = []
+        if cics_path.exists():
+            cics_data = json.loads(cics_path.read_text())
+            cics_stmts = [
+                s for s in cics_data.get("statements", [])
+                if s.get("source_file", "").upper() == sf.upper()
+                and s.get("paragraph", "").upper() == name.upper()
+            ]
+
+        # Business rules in this paragraph
+        rules = conn.execute("""
+            SELECT uuid, kind, predicate_raw, then_summary, else_summary, line_num
+            FROM business_rules
+            WHERE UPPER(source_file) = UPPER(?)
+            AND UPPER(program_uuid) = UPPER(?)
+            AND line_num BETWEEN ? AND ?
+            ORDER BY line_num
+        """, [sf, prog, sl, el]).fetchall()
+
+        # Move chains (symbols defined/used) in this paragraph
+        move_path = OUT_DIR / "artifacts" / "layer5" / "move_chains.json"
+        moves = []
+        if move_path.exists():
+            move_data = json.loads(move_path.read_text())
+            for result in move_data.get("results", []):
+                if result.get("source_file", "").upper() == sf.upper():
+                    moves = [
+                        m for m in result.get("moves", [])
+                        if m.get("paragraph", "").upper() == name.upper()
+                    ]
+                    break
+
         return {
-            "uuid":        uuid,
-            "name":        payload.get("name", ""),
-            "source_file": sf,
-            "start_line":  sl,
-            "end_line":    el,
-            "payload":     payload,
+            "uuid":            uuid,
+            "name":            name,
+            "source_file":     sf,
+            "program":         prog,
+            "start_line":      sl,
+            "end_line":        el,
+            "line_count":      el - sl + 1,
+            "statement_count": stmts,
+            "complexity":      cx,
+            "cfg_edges": [
+                {
+                    "to_para":   r[1],
+                    "edge_type": r[2],
+                    "condition": r[3],
+                    "line":      r[4],
+                }
+                for r in cfg_edges
+            ],
+            "cics_statements": [
+                {
+                    "verb":   s["verb"],
+                    "params": s["params"],
+                    "line":   s["line"],
+                }
+                for s in cics_stmts
+            ],
+            "business_rules": [
+                {
+                    "uuid":      r[0],
+                    "kind":      r[1],
+                    "predicate": r[2],
+                    "then":      r[3],
+                    "else":      r[4],
+                    "line":      r[5],
+                }
+                for r in rules
+            ],
+            "move_chains": [
+                {
+                    "source":  m["source"],
+                    "targets": m["targets"],
+                    "line":    m["line"],
+                }
+                for m in moves[:20]
+            ],
         }
     finally:
         conn.close()
@@ -556,34 +640,37 @@ def retrieve_artifact(uuid: str):
 # Business rules + Control flow + Def-use (stub endpoints)
 # -----------------------------------------------------------------------
 
-@app.get("/controlflow/{program_uuid}")
-def get_control_flow(program_uuid: str):
-    """Get CFG for a program (stub — populated Day 6)."""
+@app.get("/controlflow/{program_name}")
+def get_control_flow(program_name: str):
+    """Get CFG edges for a program. Also see GET /cfg/{program_name} for visual."""
     conn = get_db()
     try:
+        prog = program_name.upper()
+
         rows = conn.execute("""
-            SELECT from_uuid, to_uuid, edge_type, condition
+            SELECT from_uuid, to_uuid, edge_type, condition, line_num
             FROM control_flow
-            WHERE program_uuid = ?
-        """, [program_uuid]).fetchall()
+            WHERE UPPER(source_file) = UPPER(?)
+            ORDER BY line_num
+        """, [prog + ".cbl"]).fetchall()
 
         return {
-            "program_uuid": program_uuid,
+            "program":    prog,
             "edges": [
                 {
-                    "from_uuid":  r[0],
-                    "to_uuid":    r[1],
-                    "edge_type":  r[2],
-                    "condition":  r[3],
+                    "from_para": r[0],
+                    "to_para":   r[1],
+                    "edge_type": r[2],
+                    "condition": r[3],
+                    "line":      r[4],
                 }
                 for r in rows
             ],
-            "count": len(rows),
-            "note": "CFG population in progress (Day 6)"
+            "count":   len(rows),
+            "visual":  f"http://localhost:8000/cfg/{prog}",
         }
     finally:
         conn.close()
-
 
 @app.get("/defuse/{dataitem_uuid}")
 def get_def_use(dataitem_uuid: str):
@@ -944,7 +1031,7 @@ def get_connectivity(program_name: str):
         }
     finally:
         conn.close()
-        
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
