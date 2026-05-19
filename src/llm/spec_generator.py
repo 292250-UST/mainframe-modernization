@@ -105,7 +105,8 @@ if __name__ == "__main__":
     import sys
     program = sys.argv[1] if len(sys.argv) > 1 else "COTRN02C"
     result  = generate_program_spec(program)
-    print("\\n" + "="*60)
+    print()
+    print("="*60)
     print(f"SPEC FOR {result.get('program', 'UNKNOWN')}")
     print("="*60)
     print(result.get("spec", result.get("error", "No spec")))
