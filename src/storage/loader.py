@@ -478,6 +478,10 @@ def _load_cfg(db_path: Optional[Path] = None) -> None:
     conn = get_connection(db_path)
     try:
         cfg_path = OUT_DIR / "artifacts" / "layer4" / "cfg.json"
+
+        # Also load extension CFG if exists
+        ext_cfg_path = OUT_DIR / "artifacts" / "layer4" / "cfg_ext.json"
+
         if not cfg_path.exists():
             return
         data = json.loads(cfg_path.read_text())
@@ -615,6 +619,22 @@ def run_full_load(db_path: Optional[Path] = None) -> dict:
     symbols_count = load_symbols(conn)
     paras_count   = load_paragraphs(conn)
     cb_use_count  = load_copybook_use(conn)
+
+    # Also load extension module artifacts
+    ext_l1 = OUT_DIR / "artifacts" / "layer1_ext"
+    ext_l2 = OUT_DIR / "artifacts" / "layer2_ext"
+    if ext_l1.exists():
+        ext_nodes = load_ast_nodes(conn, ext_l1)
+        ext_cb    = load_copybook_use(conn, ext_l1)
+        nodes_count   += ext_nodes
+        cb_use_count  += ext_cb
+        logger.info(f"Extension module: {ext_nodes} nodes loaded")
+    if ext_l2.exists():
+        ext_sym  = load_symbols(conn, ext_l2)
+        ext_para = load_paragraphs(conn, ext_l2)
+        symbols_count += ext_sym
+        paras_count   += ext_para
+        logger.info(f"Extension module: {ext_sym} symbols, {ext_para} paragraphs loaded")
 
     conn.close()
 
