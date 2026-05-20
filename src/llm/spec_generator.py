@@ -46,10 +46,11 @@ def generate_program_spec(program_name: str, output_dir=None) -> dict:
     system_prompt = """You are a COBOL modernization expert analyzing the CardDemo banking system.
 Generate a faithful, traceable specification from the artifacts provided.
 RULES:
-1. Cite sources: [LINE:xxx] [VAR:name] [PARA:name] [COPY:name]
-2. Do NOT invent functionality not shown in the artifacts
-3. Structure: Purpose, Inputs, Processing Logic, Outputs, Error Handling
-4. Keep concise — 300-500 words"""
+1. Cite sources using UUIDs: [UUID:xxx] for paragraphs and symbols, [LINE:xxx] for line numbers, [COPY:name] for copybooks
+2. Every paragraph and variable reference MUST include its UUID from the context
+3. Do NOT invent functionality not shown in the artifacts
+4. Structure: Purpose, Inputs, Processing Logic, Outputs, Error Handling
+5. Keep concise — 300-500 words"""
 
     user_prompt = f"""Generate a specification for this COBOL program. Cite every claim.
 

@@ -90,7 +90,7 @@ def assemble_program_slice(program_name: str) -> dict:
         # 2. Paragraphs with complexity
         # ---------------------------------------------------------------
         paragraphs = conn.execute("""
-            SELECT name, start_line, end_line,
+            SELECT uuid, name, start_line, end_line,
                    statement_count, complexity
             FROM paragraphs
             WHERE program_uuid = ?
@@ -99,11 +99,12 @@ def assemble_program_slice(program_name: str) -> dict:
 
         slice_data["paragraphs"] = [
             {
-                "name":            p[0],
-                "start_line":      p[1],
-                "end_line":        p[2],
-                "statement_count": p[3],
-                "complexity":      p[4],
+                "uuid":            p[0],
+                "name":            p[1],
+                "start_line":      p[2],
+                "end_line":        p[3],
+                "statement_count": p[4],
+                "complexity":      p[5],
             }
             for p in paragraphs
         ]
@@ -112,7 +113,7 @@ def assemble_program_slice(program_name: str) -> dict:
         # 3. Symbol table (top 50 — focus on working storage)
         # ---------------------------------------------------------------
         symbols = conn.execute("""
-            SELECT name, level, pic, usage, scope,
+            SELECT uuid, name, level, pic, usage, scope,
                    canonical_type, copybook_origin, defined_at_line
             FROM symbols
             WHERE program_uuid = ?
@@ -123,14 +124,15 @@ def assemble_program_slice(program_name: str) -> dict:
 
         slice_data["symbols"] = [
             {
-                "name":            s[0],
-                "level":           s[1],
-                "pic":             s[2],
-                "usage":           s[3],
-                "scope":           s[4],
-                "canonical_type":  json.loads(s[5]) if s[5] else {},
-                "copybook_origin": s[6],
-                "defined_at_line": s[7],
+                "uuid":            s[0],
+                "name":            s[1],
+                "level":           s[2],
+                "pic":             s[3],
+                "usage":           s[4],
+                "scope":           s[5],
+                "canonical_type":  json.loads(s[6]) if s[6] else {},
+                "copybook_origin": s[7],
+                "defined_at_line": s[8],
             }
             for s in symbols
         ]
@@ -229,7 +231,7 @@ def assemble_program_slice(program_name: str) -> dict:
         ]
 
         # ---------------------------------------------------------------
-        # 9. Move chains (data lineage)
+        # 9-old. Move chains (data lineage)
         # ---------------------------------------------------------------
         move_path = OUT_DIR / "artifacts" / "layer5" / "move_chains.json"
         move_chains = []
@@ -241,6 +243,73 @@ def assemble_program_slice(program_name: str) -> dict:
                     break
 
         slice_data["move_chains"] = move_chains
+        
+        # ---------------------------------------------------------------
+        # 9. Business rules from DuckDB
+        # ---------------------------------------------------------------
+        biz_rules = conn.execute("""
+            SELECT uuid, kind, predicate_raw, then_summary,
+                   else_summary, line_num
+            FROM business_rules
+            WHERE UPPER(source_file) = UPPER(?)
+            ORDER BY line_num
+            LIMIT 20
+        """, [source_file]).fetchall()
+
+        slice_data["business_rules"] = [
+            {
+                "uuid":      r[0],
+                "kind":      r[1],
+                "predicate": r[2][:80] if r[2] else "",
+                "then":      r[3][:60] if r[3] else "",
+                "else":      r[4][:60] if r[4] else "",
+                "line":      r[5],
+            }
+            for r in biz_rules
+        ]
+
+        # ---------------------------------------------------------------
+        # 10. Def-use chains from DuckDB
+        # ---------------------------------------------------------------
+        def_use = conn.execute("""
+            SELECT data_item_uuid, operation, stmt_text, line_num
+            FROM def_use
+            WHERE UPPER(source_file) = UPPER(?)
+            ORDER BY line_num
+            LIMIT 30
+        """, [source_file]).fetchall()
+
+        slice_data["def_use"] = [
+            {
+                "variable":  r[0],
+                "operation": r[1],
+                "stmt":      r[2][:60] if r[2] else "",
+                "line":      r[3],
+            }
+            for r in def_use
+        ]
+
+        # ---------------------------------------------------------------
+        # 11. CFG edges from DuckDB
+        # ---------------------------------------------------------------
+        cfg_edges = conn.execute("""
+            SELECT from_uuid, to_uuid, edge_type, condition, line_num
+            FROM control_flow
+            WHERE UPPER(source_file) = UPPER(?)
+            ORDER BY line_num
+            LIMIT 30
+        """, [source_file]).fetchall()
+
+        slice_data["cfg_edges"] = [
+            {
+                "from_para": r[0],
+                "to_para":   r[1],
+                "edge_type": r[2],
+                "condition": r[3],
+                "line":      r[4],
+            }
+            for r in cfg_edges
+        ]
 
         logger.info(
             f"Slice assembled for {program_name}: "
@@ -293,7 +362,7 @@ def format_slice_for_llm(slice_data: dict) -> str:
         lines.append("=== PARAGRAPHS ===")
         for p in paras:
             lines.append(
-                f"  {p['name']:<40} "
+                f"  [UUID:{p.get('uuid','')}] {p['name']:<40} "
                 f"lines {p['start_line']:4}-{p['end_line']:4} "
                 f"stmts={p['statement_count']:3} "
                 f"complexity={p['complexity']}"
@@ -313,7 +382,7 @@ def format_slice_for_llm(slice_data: dict) -> str:
                 type_str += f" scale={ct['scale']}"
             cb = f" [from {s['copybook_origin']}]" if s.get("copybook_origin") else ""
             lines.append(
-                f"  L{s['level']:02} {s['name']:<35} "
+                f"  [UUID:{s.get('uuid','')}] L{s['level']:02} {s['name']:<35} "
                 f"PIC {str(s.get('pic','')):<15} "
                 f"{type_str}{cb}"
             )
@@ -347,6 +416,44 @@ def format_slice_for_llm(slice_data: dict) -> str:
             lines.append(
                 f"  {c['call_type']:<12} -> {c['call_target']:<20} "
                 f"(line {c['line']})"
+            )
+        lines.append("")
+
+    # Business rules
+    biz_rules = slice_data.get("business_rules", [])
+    if biz_rules:
+        lines.append("=== BUSINESS RULES (IF/EVALUATE) ===")
+        for r in biz_rules[:10]:
+            lines.append(
+                f"  [UUID:{r['uuid']}] {r['kind']:<10} "
+                f"line {r['line']:4}: {r['predicate'][:60]}"
+            )
+            if r["then"]:
+                lines.append(f"    THEN: {r['then']}")
+            if r["else"]:
+                lines.append(f"    ELSE: {r['else']}")
+        lines.append("")
+
+    # Def-use chains
+    def_use = slice_data.get("def_use", [])
+    if def_use:
+        lines.append("=== DEF-USE CHAINS ===")
+        for r in def_use[:15]:
+            lines.append(
+                f"  {r['operation']:<6} {r['variable']:<30} "
+                f"line {r['line']:4}: {r['stmt'][:50]}"
+            )
+        lines.append("")
+
+    # CFG edges
+    cfg_edges = slice_data.get("cfg_edges", [])
+    if cfg_edges:
+        lines.append("=== CONTROL FLOW GRAPH ===")
+        for e in cfg_edges[:15]:
+            cond = f" [{e['condition'][:30]}]" if e.get("condition") else ""
+            lines.append(
+                f"  {e['from_para']:<30} --{e['edge_type']}--> "
+                f"{e['to_para']}{cond} (line {e['line']})"
             )
         lines.append("")
 

@@ -1059,37 +1059,39 @@ def get_db2_schema():
         "indexes":      data.get("indexes", []),
     }
 
-
 @app.get("/ims")
-def get_ims_schema():
-    """Get IMS database definitions + DLI access statements."""
+def get_ims_schema(program: Optional[str] = None):
+    """Get IMS DLI statements. Optional ?program=COPAUA0C filter."""
     conn = get_db()
     try:
-        rows = conn.execute("""
-            SELECT program_uuid, segment_name, operation,
-                   pcb_name, source_file, line_num
-            FROM ims_io
-            ORDER BY source_file, line_num
-        """).fetchall()
+        if program:
+            rows = conn.execute("""
+                SELECT program_uuid, segment_name, operation,
+                       pcb_name, source_file, line_num
+                FROM ims_io
+                WHERE UPPER(program_uuid) = UPPER(?)
+                ORDER BY line_num
+            """, [program]).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT program_uuid, segment_name, operation,
+                       pcb_name, source_file, line_num
+                FROM ims_io
+                ORDER BY source_file, line_num
+            """).fetchall()
 
-        # Also load DBD schema
         dbd_path = OUT_DIR / "artifacts" / "layer6" / "ims_dbd_schema.json"
         dbd_data = _load_json(dbd_path) if dbd_path.exists() else {}
 
         return {
+            "program_filter":      program or "ALL",
             "dli_statement_count": len(rows),
             "dli_statements": [
-                {
-                    "program":    r[0],
-                    "segment":    r[1],
-                    "operation":  r[2],
-                    "pcb":        r[3],
-                    "file":       r[4],
-                    "line":       r[5],
-                }
+                {"program": r[0], "segment": r[1], "operation": r[2],
+                 "pcb": r[3], "file": r[4], "line": r[5]}
                 for r in rows
             ],
-            "databases": dbd_data.get("databases", []),
+            "databases": dbd_data.get("databases", []) if not program else [],
             "dbd_count":  dbd_data.get("dbd_count", 0),
         }
     finally:
@@ -1097,39 +1099,131 @@ def get_ims_schema():
 
 
 @app.get("/mq")
-def get_mq_graph():
-    """Get MQ queue access graph."""
+def get_mq_graph(program: Optional[str] = None):
+    """Get MQ queue access. Optional ?program=COPAUA0C filter."""
     conn = get_db()
     try:
-        rows = conn.execute("""
-            SELECT program_uuid, queue_name, operation,
-                   source_file, line_num
-            FROM mq_io
-            ORDER BY source_file, line_num
-        """).fetchall()
-
-        # Also load MQ statements artifact
-        mq_path = OUT_DIR / "artifacts" / "layer3" / "mq_statements.json"
-        mq_data = _load_json(mq_path) if mq_path.exists() else {}
+        if program:
+            rows = conn.execute("""
+                SELECT program_uuid, queue_name, operation,
+                       source_file, line_num
+                FROM mq_io
+                WHERE UPPER(program_uuid) = UPPER(?)
+                ORDER BY line_num
+            """, [program]).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT program_uuid, queue_name, operation,
+                       source_file, line_num
+                FROM mq_io
+                ORDER BY source_file, line_num
+            """).fetchall()
 
         return {
-            "mq_call_count": len(rows),
+            "program_filter": program or "ALL",
+            "mq_call_count":  len(rows),
             "calls": [
-                {
-                    "program":   r[0],
-                    "queue":     r[1],
-                    "operation": r[2],
-                    "file":      r[3],
-                    "line":      r[4],
-                }
+                {"program": r[0], "queue": r[1], "operation": r[2],
+                 "file": r[3], "line": r[4]}
                 for r in rows
             ],
             "notes": [
                 "MQ uses CALL-based API (MQOPEN/MQGET/MQPUT1/MQCLOSE)",
-                "Not EXEC MQ syntax — standard COBOL CALL statements",
                 "Only in app-authorization-ims-db2-mq extension module",
             ],
-            "raw_statements": mq_data.get("statements", []),
+        }
+    finally:
+        conn.close()
+
+@app.get("/vsam")
+def get_vsam_schemas():
+    """Get VSAM file schemas — key, record length, AIX, programs using."""
+    vsam_path = OUT_DIR / "artifacts" / "layer6" / "vsam_schemas.json"
+    if not vsam_path.exists():
+        raise HTTPException(status_code=404, detail="VSAM schemas not found")
+    data = _load_json(vsam_path)
+    return {
+        "vsam_count": data.get("vsam_count", 0),
+        "schemas":    data.get("schemas", []),
+        "notes": [
+            "KSDS: Key-Sequenced Dataset (most common, keyed access)",
+            "ESDS: Entry-Sequenced Dataset (sequential, no key)",
+            "RRDS: Relative Record Dataset (fixed-length, relative record number)",
+            "AIX: Alternate Index (secondary access path over base cluster)",
+        ]
+    }
+
+
+@app.get("/gdg")
+def get_gdg_registry():
+    """Get GDG (Generation Data Group) registry and PDS references."""
+    gdg_path = OUT_DIR / "artifacts" / "layer4" / "gdg_pds_registry.json"
+    if not gdg_path.exists():
+        raise HTTPException(status_code=404, detail="GDG registry not found")
+    data = _load_json(gdg_path)
+    return {
+        "gdg_count":  data.get("gdg_count", 0),
+        "pds_count":  data.get("pds_count", 0),
+        "gdg_bases":  data.get("gdg_bases", []),
+        "pds_refs":   data.get("pds_refs", []),
+        "notes":      data.get("notes", []),
+    }
+
+
+@app.get("/dataformats/{program_name}")
+def get_data_formats_for_program(program_name: str):
+    """Get advanced data format breakdown for a specific program."""
+    conn = get_db()
+    try:
+        prog = program_name.upper()
+        rows = conn.execute("""
+            SELECT s.name, s.pic, s.usage, s.canonical_type,
+                   s.copybook_origin, s.defined_at_line
+            FROM symbols s
+            JOIN nodes n ON s.program_uuid = n.uuid
+            WHERE n.kind = 'ProgramNode'
+            AND UPPER(n.source_file) = UPPER(?)
+            AND s.canonical_type IS NOT NULL
+            ORDER BY s.defined_at_line
+        """, [prog + ".cbl"]).fetchall()
+
+        if not rows:
+            raise HTTPException(status_code=404,
+                detail=f"Program '{program_name}' not found")
+
+        # Group by kind
+        by_kind = {}
+        for r in rows:
+            ct = json.loads(r[3]) if r[3] else {}
+            kind = ct.get("kind", "unknown")
+            if kind not in by_kind:
+                by_kind[kind] = []
+            by_kind[kind].append({
+                "name":           r[0],
+                "pic":            r[1],
+                "usage":          r[2],
+                "canonical_type": ct,
+                "copybook":       r[4],
+                "line":           r[5],
+            })
+
+        return {
+            "program":      prog,
+            "total_symbols": len(rows),
+            "by_kind": {
+                kind: {"count": len(items), "items": items[:5]}
+                for kind, items in sorted(by_kind.items(),
+                                          key=lambda x: -len(x[1]))
+            },
+            "forward_engineering_notes": {
+                "alphanumeric":   "→ String",
+                "numeric":        "→ long/int (zoned decimal)",
+                "decimal":        "→ BigDecimal (scaled)",
+                "binary":         "→ int/long (COMP/COMP-4)",
+                "packed_decimal": "→ BigDecimal COMP-3 (check rounding)",
+                "edited_numeric": "→ String (display formatting only)",
+                "group":          "→ class/struct",
+            }
         }
     finally:
         conn.close()
