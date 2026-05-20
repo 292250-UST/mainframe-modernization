@@ -205,6 +205,7 @@ def save_jcl_graph(graph: dict, output_dir: Optional[Path] = None) -> Path:
         "dependency_count": len(graph["dependencies"]),
         "jobs":             graph["jobs"],
         "dependencies":     graph["dependencies"],
+        "known_chains":     graph.get("known_chains", []),
     }
 
     with open(output_path, "w", encoding="utf-8") as f:

@@ -992,16 +992,21 @@ def get_connectivity(program_name: str):
         """, [prog]).fetchall()
 
         copybooks = conn.execute("""
-            SELECT copybook_name, source_file FROM copybook_use
-            WHERE UPPER(program_uuid) = UPPER(?)
-            ORDER BY copybook_name
+            SELECT cu.copybook_name, cu.source_file
+            FROM copybook_use cu
+            JOIN nodes n ON cu.program_uuid = n.uuid
+            WHERE n.kind = 'ProgramNode'
+            AND UPPER(n.source_file) = UPPER(?)
+            ORDER BY cu.copybook_name
         """, [prog + ".cbl"]).fetchall()
 
         shared = conn.execute("""
             SELECT DISTINCT cu2.program_uuid, cu2.copybook_name
             FROM copybook_use cu1
+            JOIN nodes n ON cu1.program_uuid = n.uuid
             JOIN copybook_use cu2 ON cu1.copybook_name = cu2.copybook_name
-            WHERE UPPER(cu1.program_uuid) = UPPER(?)
+            WHERE n.kind = 'ProgramNode'
+            AND UPPER(n.source_file) = UPPER(?)
             AND cu2.program_uuid != cu1.program_uuid
             ORDER BY cu2.copybook_name LIMIT 20
         """, [prog + ".cbl"]).fetchall()

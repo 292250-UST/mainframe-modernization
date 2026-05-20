@@ -342,6 +342,247 @@ def _get_program_uuid(
 
     return result[0] if result else None
 
+def _load_day4_artifacts(db_path: Optional[Path] = None) -> None:
+    """Load call graph, file I/O, transaction flow, JCL into DuckDB."""
+    import uuid as uuid_lib
+    conn = get_connection(db_path)
+    try:
+        # Call graph
+        cg_path = OUT_DIR / "artifacts" / "layer4" / "call_graph.json"
+        if cg_path.exists():
+            data = json.loads(cg_path.read_text())
+            rows = []
+            for e in data.get("edges", []):
+                rows.append((
+                    str(uuid_lib.uuid4()).replace("-","")[:32],
+                    e.get("caller",""), e.get("callee",""),
+                    None, e.get("call_type",""), e.get("callee",""),
+                    e.get("is_dynamic", False), e.get("source_file",""),
+                    e.get("line", 0),
+                ))
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO call_graph
+                    (id, caller_uuid, callee_uuid, call_site_uuid, call_type,
+                     call_target, is_dynamic, source_file, line_num)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"Call graph: {len(rows)} edges loaded")
+
+        # File I/O
+        fio_path = OUT_DIR / "artifacts" / "layer4" / "file_io.json"
+        if fio_path.exists():
+            data = json.loads(fio_path.read_text())
+            ops  = data.get("operations", [])
+            rows = [(str(uuid_lib.uuid4()).replace("-","")[:32],
+                     op.get("program",""), op.get("file_name",""),
+                     op.get("operation",""), None, None,
+                     op.get("source_file",""), op.get("line", 0))
+                    for op in ops]
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO file_io
+                    (id, program_uuid, file_name, operation, record_copybook,
+                     stmt_uuid, source_file, line_num)
+                    VALUES (?,?,?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"File I/O: {len(rows)} operations loaded")
+
+        # Transaction flow
+        tf_path = OUT_DIR / "artifacts" / "layer4" / "transaction_flow.json"
+        if tf_path.exists():
+            data  = json.loads(tf_path.read_text())
+            edges = data.get("edges", [])
+            rows  = [(e.get("id", str(uuid_lib.uuid4()).replace("-","")[:32]),
+                      e.get("from_program",""), e.get("to_program",""),
+                      e.get("edge_type",""), e.get("from_transid",""),
+                      e.get("commarea_size"), None,
+                      e.get("source_file",""), e.get("line", 0))
+                     for e in edges]
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO transaction_flow
+                    (id, from_program_uuid, to_program_uuid, edge_type,
+                     transid, commarea_size, stmt_uuid, source_file, line_num)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"Transaction flow: {len(rows)} edges loaded")
+
+        # JCL
+        jcl_path = OUT_DIR / "artifacts" / "jcl" / "jcl_graph.json"
+        if jcl_path.exists():
+            data = json.loads(jcl_path.read_text())
+            jobs = data.get("jobs", [])
+            rows = [(j.get("id",""), j.get("job_name",""), j.get("step_name",""),
+                     j.get("program_name",""), j.get("dd_name",""),
+                     j.get("dataset_name",""), j.get("disposition",""),
+                     j.get("steplib",""), j.get("parm",""),
+                     j.get("source_file",""), 0)
+                    for j in jobs]
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO jcl_job
+                    (id, job_name, step_name, program_name, dd_name,
+                     dataset_name, disposition, steplib, parm, source_file, line_num)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"JCL jobs: {len(rows)} loaded")
+
+            deps = data.get("dependencies", [])
+            rows = [(d.get("id",""), d.get("producer_job",""),
+                     d.get("consumer_job",""), d.get("dataset_name",""),
+                     d.get("producer_disp",""), d.get("consumer_disp",""))
+                    for d in deps]
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO jcl_dependency
+                    (id, producer_job, consumer_job, dataset_name,
+                     producer_disp, consumer_disp)
+                    VALUES (?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"JCL dependencies: {len(rows)} loaded")
+    finally:
+        conn.close()
+
+
+def _load_business_rules(db_path: Optional[Path] = None) -> None:
+    """Load business rules into DuckDB."""
+    conn = get_connection(db_path)
+    try:
+        br_path = OUT_DIR / "artifacts" / "layer5" / "business_rules.json"
+        if not br_path.exists():
+            logger.warning("Business rules artifact not found — run business_rules_extractor first")
+            return
+        data  = json.loads(br_path.read_text())
+        rules = data.get("rules", [])
+        rows  = [(r["uuid"], r["program"], r["kind"],
+                  r["predicate_raw"], json.dumps({}),
+                  r["then_summary"], r["else_summary"],
+                  r["source_file"], r["line"])
+                 for r in rules]
+        if rows:
+            conn.executemany("""
+                INSERT OR IGNORE INTO business_rules
+                (uuid, program_uuid, kind, predicate_raw, predicate_resolved,
+                 then_summary, else_summary, source_file, line_num)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            """, rows)
+        logger.info(f"Business rules: {len(rows)} loaded")
+    finally:
+        conn.close()
+
+
+def _load_cfg(db_path: Optional[Path] = None) -> None:
+    """Load CFG edges into DuckDB."""
+    import uuid as uuid_lib
+    conn = get_connection(db_path)
+    try:
+        cfg_path = OUT_DIR / "artifacts" / "layer4" / "cfg.json"
+        if not cfg_path.exists():
+            return
+        data = json.loads(cfg_path.read_text())
+        rows = []
+        for cfg in data.get("cfgs", []):
+            prog = cfg["program"]
+            row = conn.execute("""
+                SELECT uuid FROM nodes
+                WHERE kind = 'ProgramNode'
+                AND UPPER(source_file) = UPPER(?)
+                LIMIT 1
+            """, [cfg["source_file"]]).fetchone()
+            prog_uuid = row[0] if row else prog
+            for edge in cfg.get("edges", []):
+                rows.append((
+                    str(uuid_lib.uuid4()).replace("-","")[:32],
+                    prog_uuid,
+                    edge["from_para"], edge["to_para"],
+                    edge["edge_type"], edge.get("condition"),
+                    edge["source_file"], edge["line"],
+                ))
+        if rows:
+            conn.executemany("""
+                INSERT OR IGNORE INTO control_flow
+                (id, program_uuid, from_uuid, to_uuid, edge_type,
+                 condition, source_file, line_num)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, rows)
+        logger.info(f"CFG: {len(rows)} edges loaded")
+    finally:
+        conn.close()
+
+
+def _load_def_use(db_path: Optional[Path] = None) -> None:
+    """Load def-use chains into DuckDB."""
+    import uuid as uuid_lib
+    conn = get_connection(db_path)
+    try:
+        du_path = OUT_DIR / "artifacts" / "layer5" / "def_use.json"
+        if not du_path.exists():
+            return
+        data  = json.loads(du_path.read_text())
+        rows  = [(str(uuid_lib.uuid4()).replace("-","")[:32],
+                  r["variable"], r["operation"], None,
+                  r["stmt_text"], r["source_file"], r["line"])
+                 for r in data.get("entries", [])]
+        if rows:
+            conn.executemany("""
+                INSERT OR IGNORE INTO def_use
+                (id, data_item_uuid, operation, stmt_uuid,
+                 stmt_text, source_file, line_num)
+                VALUES (?,?,?,?,?,?,?)
+            """, rows)
+        logger.info(f"Def-use: {len(rows)} entries loaded")
+    finally:
+        conn.close()
+
+
+def _load_dli_mq(db_path: Optional[Path] = None) -> None:
+    """Load DLI and MQ statements into DuckDB."""
+    import uuid as uuid_lib
+    conn = get_connection(db_path)
+    try:
+        # DLI
+        dli_path = OUT_DIR / "artifacts" / "layer3" / "dli_statements.json"
+        if dli_path.exists():
+            data = json.loads(dli_path.read_text())
+            rows = [(str(uuid_lib.uuid4()).replace("-","")[:32],
+                     s["program"], s["segment"], s["verb"],
+                     s["pcb"], s["source_file"], s["line"])
+                    for s in data.get("statements", [])]
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO ims_io
+                    (id, program_uuid, segment_name, operation,
+                     pcb_name, source_file, line_num)
+                    VALUES (?,?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"IMS I/O: {len(rows)} DLI statements loaded")
+
+        # MQ
+        mq_path = OUT_DIR / "artifacts" / "layer3" / "mq_statements.json"
+        if mq_path.exists():
+            data = json.loads(mq_path.read_text())
+            rows = []
+            seen = set()
+            for s in data.get("statements", []):
+                key = (s["program"], s["verb"], s["line"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                op = "PUT" if "PUT" in s["verb"] else "GET" if "GET" in s["verb"] else s["verb"]
+                rows.append((str(uuid_lib.uuid4()).replace("-","")[:32],
+                             s["program"], s.get("queue",""),
+                             op, None, s["source_file"], s["line"]))
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO mq_io
+                    (id, program_uuid, queue_name, operation,
+                     correlation_id, source_file, line_num)
+                    VALUES (?,?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"MQ I/O: {len(rows)} calls loaded")
+    finally:
+        conn.close()
 
 def run_full_load(db_path: Optional[Path] = None) -> dict:
     """
@@ -353,26 +594,44 @@ def run_full_load(db_path: Optional[Path] = None) -> dict:
     3. Symbols (FK -> nodes)
     4. Paragraphs (FK -> nodes)
     5. Copybook use (FK -> nodes)
-
-    Args:
-        db_path: Path to .duckdb file
-
-    Returns:
-        dict: Summary of rows loaded per table
+    6. Call graph
+    7. File I/O
+    8. Transaction flow
+    9. JCL jobs + dependencies
+    10. Business rules
+    11. CFG
+    12. Def-use
+    13. IMS I/O (DLI)
+    14. MQ I/O
     """
     conn = get_connection(db_path)
-
     logger.info("Starting full DuckDB load")
     logger.info("=" * 50)
 
     init_schema(conn)
 
-    nodes_count    = load_ast_nodes(conn)
-    symbols_count  = load_symbols(conn)
-    paras_count    = load_paragraphs(conn)
-    cb_use_count   = load_copybook_use(conn)
+    # Layer 1+2
+    nodes_count   = load_ast_nodes(conn)
+    symbols_count = load_symbols(conn)
+    paras_count   = load_paragraphs(conn)
+    cb_use_count  = load_copybook_use(conn)
 
     conn.close()
+
+    # Layer 4 artifacts (call graph, file I/O, tx flow, JCL)
+    _load_day4_artifacts(db_path)
+
+    # Business rules
+    _load_business_rules(db_path)
+
+    # CFG
+    _load_cfg(db_path)
+
+    # Def-use
+    _load_def_use(db_path)
+
+    # DLI + MQ
+    _load_dli_mq(db_path)
 
     summary = {
         "nodes":        nodes_count,
