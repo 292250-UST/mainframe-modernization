@@ -1045,6 +1045,94 @@ def get_connectivity(program_name: str):
         }
     finally:
         conn.close()
+@app.get("/db2")
+def get_db2_schema():
+    """Get DB2 table definitions from DDL parsing."""
+    db2_path = OUT_DIR / "artifacts" / "layer6" / "db2_schema.json"
+    if not db2_path.exists():
+        raise HTTPException(status_code=404, detail="DB2 schema not found")
+    data = _load_json(db2_path)
+    return {
+        "table_count":  data.get("table_count", 0),
+        "index_count":  data.get("index_count", 0),
+        "tables":       data.get("tables", []),
+        "indexes":      data.get("indexes", []),
+    }
+
+
+@app.get("/ims")
+def get_ims_schema():
+    """Get IMS database definitions + DLI access statements."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT program_uuid, segment_name, operation,
+                   pcb_name, source_file, line_num
+            FROM ims_io
+            ORDER BY source_file, line_num
+        """).fetchall()
+
+        # Also load DBD schema
+        dbd_path = OUT_DIR / "artifacts" / "layer6" / "ims_dbd_schema.json"
+        dbd_data = _load_json(dbd_path) if dbd_path.exists() else {}
+
+        return {
+            "dli_statement_count": len(rows),
+            "dli_statements": [
+                {
+                    "program":    r[0],
+                    "segment":    r[1],
+                    "operation":  r[2],
+                    "pcb":        r[3],
+                    "file":       r[4],
+                    "line":       r[5],
+                }
+                for r in rows
+            ],
+            "databases": dbd_data.get("databases", []),
+            "dbd_count":  dbd_data.get("dbd_count", 0),
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/mq")
+def get_mq_graph():
+    """Get MQ queue access graph."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT program_uuid, queue_name, operation,
+                   source_file, line_num
+            FROM mq_io
+            ORDER BY source_file, line_num
+        """).fetchall()
+
+        # Also load MQ statements artifact
+        mq_path = OUT_DIR / "artifacts" / "layer3" / "mq_statements.json"
+        mq_data = _load_json(mq_path) if mq_path.exists() else {}
+
+        return {
+            "mq_call_count": len(rows),
+            "calls": [
+                {
+                    "program":   r[0],
+                    "queue":     r[1],
+                    "operation": r[2],
+                    "file":      r[3],
+                    "line":      r[4],
+                }
+                for r in rows
+            ],
+            "notes": [
+                "MQ uses CALL-based API (MQOPEN/MQGET/MQPUT1/MQCLOSE)",
+                "Not EXEC MQ syntax — standard COBOL CALL statements",
+                "Only in app-authorization-ims-db2-mq extension module",
+            ],
+            "raw_statements": mq_data.get("statements", []),
+        }
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     import uvicorn
