@@ -668,33 +668,45 @@ def get_control_flow(program_name: str):
         }
     finally:
         conn.close()
-
-@app.get("/defuse/{dataitem_uuid}")
-def get_def_use(dataitem_uuid: str):
-    """Get def-use chain for a data item (stub — populated Day 6)."""
+        
+@app.get("/defuse/{program_name}")
+def get_def_use(program_name: str):
+    """
+    Get def-use chains for all variables in a program.
+    Shows where each variable is defined (WRITE) and used (READ).
+    """
     conn = get_db()
     try:
+        prog = program_name.upper()
+
         rows = conn.execute("""
-            SELECT operation, stmt_text, source_file, line_num
-            FROM def_use WHERE data_item_uuid = ?
-        """, [dataitem_uuid]).fetchall()
+            SELECT data_item_uuid, operation, stmt_text, source_file, line_num
+            FROM def_use
+            WHERE UPPER(source_file) = UPPER(?)
+            ORDER BY line_num
+        """, [prog + ".cbl"]).fetchall()
+
+        # Group by variable
+        by_var = {}
+        for r in rows:
+            var = r[0]
+            if var not in by_var:
+                by_var[var] = {"variable": var, "reads": [], "writes": []}
+            entry = {"stmt_text": r[2], "line": r[4]}
+            if r[1] == "WRITE":
+                by_var[var]["writes"].append(entry)
+            else:
+                by_var[var]["reads"].append(entry)
+
         return {
-                    "data_item_uuid": dataitem_uuid,
-                    "chain": [
-                        {
-                            "operation":   r[0],
-                            "stmt_text":   r[1],
-                            "source_file": r[2],
-                            "line":        r[3],
-                        }
-                        for r in rows
-                    ],
-                    "count": len(rows),
-                    "note": "Def-use chain population in progress (Day 6)"
-                }
+            "program":     prog,
+            "total_vars":  len(by_var),
+            "total_reads": sum(1 for r in rows if r[1] == "READ"),
+            "total_writes":sum(1 for r in rows if r[1] == "WRITE"),
+            "chains":      list(by_var.values())[:50],
+        }
     finally:
         conn.close()
-
 
 @app.get("/businessrules/{program_uuid}")
 def get_business_rules(program_uuid: str):
