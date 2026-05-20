@@ -86,11 +86,20 @@ def normalize_pic(pic: Optional[str], usage: str = "DISPLAY") -> dict:
     Returns:
         dict: Canonical type with kind, precision, scale, signed, packed
     """
+    
     if not pic:
         return {"kind": "group", "length": 0}
 
     pic = pic.upper().strip()
     usage = usage.upper().strip()
+
+    # Edited numeric: Z, *, +, -, $, comma, period (display formatting)
+    if re.search(r'[Z*$,]', pic) and '9' not in pic and 'X' not in pic:
+        return {
+            "kind":    "edited_numeric",
+            "raw_pic": pic,
+            "signed":  pic.startswith("+") or pic.startswith("-"),
+        }
 
     # Determine if signed
     signed = pic.startswith("S")
@@ -128,8 +137,8 @@ def normalize_pic(pic: Optional[str], usage: str = "DISPLAY") -> dict:
         precision = int_digits + scale
 
         # Determine storage kind from USAGE
-        packed = usage in ("COMP-3", "PACKED-DECIMAL")
-        binary = usage in ("COMP", "COMP-4", "BINARY")
+        packed = usage in ("COMP-3", "COMP_3", "PACKED-DECIMAL", "PACKED_DECIMAL")
+        binary = usage in ("COMP", "COMP-4", "COMP_4", "BINARY")
 
         if scale > 0:
             kind = "decimal"
