@@ -1228,6 +1228,46 @@ def get_data_formats_for_program(program_name: str):
     finally:
         conn.close()
 
+@app.get("/spec/{program_name}")
+def get_program_spec(program_name: str, refresh: bool = False):
+    """
+    Generate LLM-powered grounded specification for any program.
+    Cached in out/demo/ — use ?refresh=true to regenerate.
+    Every claim cites UUID from artifact store.
+    """
+    import os
+    prog = program_name.upper()
+    demo_dir = OUT_DIR / "demo"
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    cached_path = demo_dir / f"{prog}_spec.json"
+
+    # Return cached if exists and not refreshing
+    if cached_path.exists() and not refresh:
+        data = json.loads(cached_path.read_text())
+        data["cached"] = True
+        return data
+
+    # Check OPEN API key
+    nvidia_key = os.environ.get("OPENAI_API_KEY", "")
+    if not nvidia_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY not set — set environment variable to enable spec generation"
+        )
+
+    # Generate spec
+    try:
+        from src.llm.spec_generator import generate_program_spec
+        result = generate_program_spec(prog, output_dir=demo_dir)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        result["cached"] = False
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
