@@ -140,7 +140,7 @@ def get_program(program_name: str):
 
         # Get copybooks used
         copybooks = conn.execute("""
-            SELECT copybook_name FROM copybook_use WHERE program_uuid = ?
+            SELECT id, copybook_name FROM copybook_use WHERE program_uuid = ?
         """, [uuid]).fetchall()
 
         return {
@@ -164,6 +164,7 @@ def get_program(program_name: str):
             "symbol_count":   sym_count,
             "copybooks":      [c[0] for c in copybooks],
             "payload":        payload,
+            "copybooks": [{"uuid": c[0], "name": c[1]} for c in copybooks]
         }
     finally:
         conn.close()
@@ -331,21 +332,32 @@ def get_callers(program_name: str):
     conn = get_db()
     try:
         rows = conn.execute("""
-            SELECT caller_uuid, call_type, call_target, source_file, line_num
+            SELECT id, caller_uuid, call_type, call_target, source_file, line_num
             FROM call_graph
             WHERE UPPER(callee_uuid) = UPPER(?)
                OR UPPER(call_target) = UPPER(?)
         """, [program_name, program_name]).fetchall()
 
+        # Get program UUID
+        prog_node = conn.execute("""
+            SELECT uuid FROM nodes
+            WHERE kind = 'ProgramNode'
+            AND UPPER(source_file) = UPPER(?)
+            LIMIT 1
+        """, [program_name.upper() + ".cbl"]).fetchone()
+        program_uuid = prog_node[0] if prog_node else None
+
         return {
             "program":  program_name,
+            "program_uuid": program_uuid,
             "callers":  [
-                {
-                    "caller":      r[0],
-                    "call_type":   r[1],
-                    "call_target": r[2],
-                    "source_file": r[3],
-                    "line":        r[4],
+                {   
+                    "uuid":        r[0],
+                    "caller":      r[1],
+                    "call_type":   r[2],
+                    "call_target": r[3],
+                    "source_file": r[4],
+                    "line":        r[5],
                 }
                 for r in rows
             ],
@@ -361,20 +373,32 @@ def get_callees(program_name: str):
     conn = get_db()
     try:
         rows = conn.execute("""
-            SELECT callee_uuid, call_type, call_target, source_file, line_num
+            SELECT id, callee_uuid, call_type, call_target, source_file, line_num
             FROM call_graph
             WHERE UPPER(caller_uuid) = UPPER(?)
+            ORDER BY line_num
         """, [program_name.upper()]).fetchall()
+
+        # Get program UUID
+        prog_node = conn.execute("""
+            SELECT uuid FROM nodes
+            WHERE kind = 'ProgramNode'
+            AND UPPER(source_file) = UPPER(?)
+            LIMIT 1
+        """, [program_name.upper() + ".cbl"]).fetchone()
+        program_uuid = prog_node[0] if prog_node else None
 
         return {
             "program":  program_name,
+            "program_uuid": program_uuid,
             "callees":  [
                 {
-                    "callee":      r[0],
-                    "call_type":   r[1],
-                    "call_target": r[2],
-                    "source_file": r[3],
-                    "line":        r[4],
+                    "uuid":        r[0],
+                    "callee":      r[1],
+                    "call_type":   r[2],
+                    "call_target": r[3],
+                    "source_file": r[4],
+                    "line":        r[5],
                 }
                 for r in rows
             ],
@@ -464,7 +488,7 @@ def get_job_chain(job_name: str):
     try:
         # Get steps for this job
         steps = conn.execute("""
-            SELECT step_name, program_name, dd_name,
+            SELECT id, step_name, program_name, dd_name,
                    dataset_name, disposition
             FROM jcl_job
             WHERE UPPER(job_name) = UPPER(?)
@@ -489,15 +513,25 @@ def get_job_chain(job_name: str):
                 if job_name.upper() in [j.upper() for j in chain.get("jobs", [])]:
                     known_chains.append(chain)
 
+        # Get job UUID
+        job_node = conn.execute("""
+            SELECT id FROM jcl_job
+            WHERE UPPER(job_name) = UPPER(?)
+            LIMIT 1
+        """, [job_name.upper()]).fetchone()
+        job_uuid = job_node[0] if job_node else None
+
         return {
             "job_name":     job_name,
-            "steps":        [
+            "job_uuid": job_uuid,
+            "steps": [
                 {
-                    "step_name":    r[0],
-                    "program":      r[1],
-                    "dd_name":      r[2],
-                    "dataset":      r[3],
-                    "disposition":  r[4],
+                    "uuid":        r[0],
+                    "step_name":   r[1],
+                    "program":     r[2],
+                    "dd_name":     r[3],
+                    "dataset":     r[4],
+                    "disposition": r[5],
                 }
                 for r in steps
             ],
@@ -980,8 +1014,9 @@ def get_connectivity(program_name: str):
         prog = program_name.upper()
 
         callees = conn.execute("""
-            SELECT call_target, call_type, source_file, line_num
-            FROM call_graph WHERE UPPER(caller_uuid) = ?
+            SELECT id, call_target, call_type, source_file, line_num
+            FROM call_graph
+            WHERE UPPER(caller_uuid) = UPPER(?)
             ORDER BY line_num
         """, [prog]).fetchall()
 
@@ -1025,8 +1060,18 @@ def get_connectivity(program_name: str):
             ORDER BY job_name
         """, [prog]).fetchall()
 
+        # Get program UUID
+        prog_node = conn.execute("""
+            SELECT uuid FROM nodes
+            WHERE kind = 'ProgramNode'
+            AND UPPER(source_file) = UPPER(?)
+            LIMIT 1
+        """, [program_name.upper() + ".cbl"]).fetchone()
+        program_uuid = prog_node[0] if prog_node else None
+
         return {
             "program": prog,
+            "program_uuid": program_uuid,
             "connectivity_summary": {
                 "call_edges_out":        len([c for c in callees if c[1] == "CALL"]),
                 "xctl_edges_out":        len([c for c in callees if c[1] == "CICS_XCTL"]),
@@ -1066,16 +1111,16 @@ def get_ims_schema(program: Optional[str] = None):
     try:
         if program:
             rows = conn.execute("""
-                SELECT program_uuid, segment_name, operation,
-                       pcb_name, source_file, line_num
+                SELECT id, program_uuid, segment_name, operation,
+                   pcb_name, source_file, line_num
                 FROM ims_io
                 WHERE UPPER(program_uuid) = UPPER(?)
                 ORDER BY line_num
             """, [program]).fetchall()
         else:
             rows = conn.execute("""
-                SELECT program_uuid, segment_name, operation,
-                       pcb_name, source_file, line_num
+                SELECT id, program_uuid, segment_name, operation,
+                   pcb_name, source_file, line_num
                 FROM ims_io
                 ORDER BY source_file, line_num
             """).fetchall()
@@ -1087,8 +1132,8 @@ def get_ims_schema(program: Optional[str] = None):
             "program_filter":      program or "ALL",
             "dli_statement_count": len(rows),
             "dli_statements": [
-                {"program": r[0], "segment": r[1], "operation": r[2],
-                 "pcb": r[3], "file": r[4], "line": r[5]}
+                {"uuid": r[0], "program": r[1], "segment": r[2], 
+                 "operation": r[3], "pcb": r[4], "file": r[5], "line": r[6]}
                 for r in rows
             ],
             "databases": dbd_data.get("databases", []) if not program else [],
@@ -1105,7 +1150,7 @@ def get_mq_graph(program: Optional[str] = None):
     try:
         if program:
             rows = conn.execute("""
-                SELECT program_uuid, queue_name, operation,
+                SELECT id, program_uuid, queue_name, operation,
                        source_file, line_num
                 FROM mq_io
                 WHERE UPPER(program_uuid) = UPPER(?)
@@ -1113,7 +1158,7 @@ def get_mq_graph(program: Optional[str] = None):
             """, [program]).fetchall()
         else:
             rows = conn.execute("""
-                SELECT program_uuid, queue_name, operation,
+                SELECT id, program_uuid, queue_name, operation,
                        source_file, line_num
                 FROM mq_io
                 ORDER BY source_file, line_num
@@ -1123,8 +1168,8 @@ def get_mq_graph(program: Optional[str] = None):
             "program_filter": program or "ALL",
             "mq_call_count":  len(rows),
             "calls": [
-                {"program": r[0], "queue": r[1], "operation": r[2],
-                 "file": r[3], "line": r[4]}
+                {"uuid": r[0], "program": r[1], "queue": r[2], 
+                 "operation": r[3], "file": r[4], "line": r[5]}
                 for r in rows
             ],
             "notes": [
@@ -1138,13 +1183,17 @@ def get_mq_graph(program: Optional[str] = None):
 @app.get("/vsam")
 def get_vsam_schemas():
     """Get VSAM file schemas — key, record length, AIX, programs using."""
+    import hashlib
     vsam_path = OUT_DIR / "artifacts" / "layer6" / "vsam_schemas.json"
     if not vsam_path.exists():
         raise HTTPException(status_code=404, detail="VSAM schemas not found")
-    data = _load_json(vsam_path)
+    data    = _load_json(vsam_path)
+    schemas = data.get("schemas", [])
+    for s in schemas:
+        s["uuid"] = hashlib.sha256(s["dsn"].encode()).hexdigest()[:32]
     return {
         "vsam_count": data.get("vsam_count", 0),
-        "schemas":    data.get("schemas", []),
+        "schemas":    schemas,
         "notes": [
             "KSDS: Key-Sequenced Dataset (most common, keyed access)",
             "ESDS: Entry-Sequenced Dataset (sequential, no key)",
@@ -1157,16 +1206,24 @@ def get_vsam_schemas():
 @app.get("/gdg")
 def get_gdg_registry():
     """Get GDG (Generation Data Group) registry and PDS references."""
+    import hashlib
     gdg_path = OUT_DIR / "artifacts" / "layer4" / "gdg_pds_registry.json"
     if not gdg_path.exists():
         raise HTTPException(status_code=404, detail="GDG registry not found")
-    data = _load_json(gdg_path)
+    data      = _load_json(gdg_path)
+    gdg_bases = data.get("gdg_bases", [])
+    for g in gdg_bases:
+        g["uuid"] = hashlib.sha256(g["base_dsn"].encode()).hexdigest()[:32]
+        for ref in g.get("references", []):
+            ref["uuid"] = hashlib.sha256(
+                f"{g['base_dsn']}:{ref['job']}:{ref['generation']}".encode()
+            ).hexdigest()[:32]
     return {
-        "gdg_count":  data.get("gdg_count", 0),
-        "pds_count":  data.get("pds_count", 0),
-        "gdg_bases":  data.get("gdg_bases", []),
-        "pds_refs":   data.get("pds_refs", []),
-        "notes":      data.get("notes", []),
+        "gdg_count": data.get("gdg_count", 0),
+        "pds_count": data.get("pds_count", 0),
+        "gdg_bases": gdg_bases,
+        "pds_refs":  data.get("pds_refs", []),
+        "notes":     data.get("notes", []),
     }
 
 
@@ -1177,7 +1234,7 @@ def get_data_formats_for_program(program_name: str):
     try:
         prog = program_name.upper()
         rows = conn.execute("""
-            SELECT s.name, s.pic, s.usage, s.canonical_type,
+            SELECT s.uuid, s.name, s.pic, s.usage, s.canonical_type,
                    s.copybook_origin, s.defined_at_line
             FROM symbols s
             JOIN nodes n ON s.program_uuid = n.uuid
@@ -1194,18 +1251,22 @@ def get_data_formats_for_program(program_name: str):
         # Group by kind
         by_kind = {}
         for r in rows:
-            ct = json.loads(r[3]) if r[3] else {}
+            try:
+                ct = json.loads(r[3]) if r[3] else {}
+            except (json.JSONDecodeError, TypeError):
+                ct = {}
             kind = ct.get("kind", "unknown")
             if kind not in by_kind:
                 by_kind[kind] = []
             by_kind[kind].append({
-                "name":           r[0],
-                "pic":            r[1],
-                "usage":          r[2],
-                "canonical_type": ct,
-                "copybook":       r[4],
-                "line":           r[5],
-            })
+                    "uuid":           r[0],
+                    "name":           r[1],
+                    "pic":            r[2],
+                    "usage":          r[3],
+                    "canonical_type": ct,
+                    "copybook":       r[5],
+                    "line":           r[6],
+                })
 
         return {
             "program":      prog,
