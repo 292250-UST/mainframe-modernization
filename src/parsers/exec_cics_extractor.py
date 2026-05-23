@@ -35,6 +35,8 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 from config import CORPUS_DIR, OUT_DIR
 
+import hashlib
+
 logger = get_logger("parsers.exec_cics_extractor")
 
 # Pattern to find EXEC CICS blocks
@@ -169,6 +171,10 @@ def run(corpus_dir: Optional[Path] = None,
     for cbl_file in cbl_files:
         stmts = extract_cics_from_file(cbl_file)
         if stmts:
+            for stmt in stmts:
+                stmt["uuid"] = hashlib.sha256(
+                    f"{stmt['source_file']}:{stmt['line']}:{stmt['verb']}".encode()
+                ).hexdigest()[:32]
             all_stmts.extend(stmts)
             event_log.log_success(
                 cbl_file.name,

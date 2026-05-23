@@ -156,7 +156,7 @@ def assemble_program_slice(program_name: str) -> dict:
         # 5. Call graph edges (what this program calls)
         # ---------------------------------------------------------------
         callees = conn.execute("""
-            SELECT callee_uuid, call_type, call_target, line_num
+            SELECT id, callee_uuid, call_type, call_target, line_num
             FROM call_graph
             WHERE UPPER(caller_uuid) = UPPER(?)
             ORDER BY line_num
@@ -164,10 +164,11 @@ def assemble_program_slice(program_name: str) -> dict:
 
         slice_data["calls"] = [
             {
-                "callee":      r[0],
-                "call_type":   r[1],
-                "call_target": r[2],
-                "line":        r[3],
+                "uuid":        r[0],
+                "callee":      r[1],
+                "call_type":   r[2],
+                "call_target": r[3],
+                "line":        r[4],
             }
             for r in callees
         ]
@@ -222,6 +223,7 @@ def assemble_program_slice(program_name: str) -> dict:
 
         slice_data["cics_statements"] = [
             {
+                "uuid":      s.get("uuid", ""),
                 "verb":      s["verb"],
                 "params":    s["params"],
                 "paragraph": s["paragraph"],
@@ -231,7 +233,7 @@ def assemble_program_slice(program_name: str) -> dict:
         ]
 
         # ---------------------------------------------------------------
-        # 9-old. Move chains (data lineage)
+        # 9. Move chains (data lineage)
         # ---------------------------------------------------------------
         move_path = OUT_DIR / "artifacts" / "layer5" / "move_chains.json"
         move_chains = []
@@ -245,7 +247,7 @@ def assemble_program_slice(program_name: str) -> dict:
         slice_data["move_chains"] = move_chains
         
         # ---------------------------------------------------------------
-        # 9. Business rules from DuckDB
+        # 10. Business rules from DuckDB
         # ---------------------------------------------------------------
         biz_rules = conn.execute("""
             SELECT uuid, kind, predicate_raw, then_summary,
@@ -269,10 +271,10 @@ def assemble_program_slice(program_name: str) -> dict:
         ]
 
         # ---------------------------------------------------------------
-        # 10. Def-use chains from DuckDB
+        # 11. Def-use chains from DuckDB
         # ---------------------------------------------------------------
         def_use = conn.execute("""
-            SELECT data_item_uuid, operation, stmt_text, line_num
+            SELECT id, data_item_uuid, operation, line_num
             FROM def_use
             WHERE UPPER(source_file) = UPPER(?)
             ORDER BY line_num
@@ -281,19 +283,19 @@ def assemble_program_slice(program_name: str) -> dict:
 
         slice_data["def_use"] = [
             {
-                "variable":  r[0],
-                "operation": r[1],
-                "stmt":      r[2][:60] if r[2] else "",
+                "uuid":      r[0],
+                "variable":  r[1],
+                "operation": r[2],
                 "line":      r[3],
             }
             for r in def_use
         ]
 
         # ---------------------------------------------------------------
-        # 11. CFG edges from DuckDB
+        # 12. CFG edges from DuckDB
         # ---------------------------------------------------------------
         cfg_edges = conn.execute("""
-            SELECT from_uuid, to_uuid, edge_type, condition, line_num
+            SELECT id, from_uuid, to_uuid, edge_type, condition, line_num
             FROM control_flow
             WHERE UPPER(source_file) = UPPER(?)
             ORDER BY line_num
@@ -302,11 +304,12 @@ def assemble_program_slice(program_name: str) -> dict:
 
         slice_data["cfg_edges"] = [
             {
-                "from_para": r[0],
-                "to_para":   r[1],
-                "edge_type": r[2],
-                "condition": r[3],
-                "line":      r[4],
+                "uuid":      r[0],
+                "from_para": r[1],
+                "to_para":   r[2],
+                "edge_type": r[3],
+                "condition": r[4],
+                "line":      r[5],
             }
             for r in cfg_edges
         ]
@@ -403,7 +406,7 @@ def format_slice_for_llm(slice_data: dict) -> str:
         for s in cics:
             params_str = ", ".join(f"{k}={v}" for k, v in s["params"].items())
             lines.append(
-                f"  {s['verb']:<15} {params_str[:60]} "
+                f"  [UUID:{s.get('uuid','')}] {s['verb']:<15} {params_str[:60]} "
                 f"(line {s['line']}, para={s['paragraph']})"
             )
         lines.append("")
@@ -414,8 +417,8 @@ def format_slice_for_llm(slice_data: dict) -> str:
         lines.append("=== PROGRAM CALLS ===")
         for c in calls:
             lines.append(
-                f"  {c['call_type']:<12} -> {c['call_target']:<20} "
-                f"(line {c['line']})"
+                f"  [UUID:{c.get('uuid','')}] {c['call_type']:<12} -> "
+                f"{c['call_target']:<20} (line {c['line']})"
             )
         lines.append("")
 
@@ -440,8 +443,8 @@ def format_slice_for_llm(slice_data: dict) -> str:
         lines.append("=== DEF-USE CHAINS ===")
         for r in def_use[:15]:
             lines.append(
-                f"  {r['operation']:<6} {r['variable']:<30} "
-                f"line {r['line']:4}: {r['stmt'][:50]}"
+                f"  [UUID:{r.get('uuid','')}] {r['operation']:<6} "
+                f"{r['variable']:<30} line {r['line']:4}"
             )
         lines.append("")
 
@@ -452,8 +455,8 @@ def format_slice_for_llm(slice_data: dict) -> str:
         for e in cfg_edges[:15]:
             cond = f" [{e['condition'][:30]}]" if e.get("condition") else ""
             lines.append(
-                f"  {e['from_para']:<30} --{e['edge_type']}--> "
-                f"{e['to_para']}{cond} (line {e['line']})"
+                f"  [UUID:{e.get('uuid','')}] {e['from_para']:<30} "
+                f"--{e['edge_type']}--> {e['to_para']}{cond} (line {e['line']})"
             )
         lines.append("")
 

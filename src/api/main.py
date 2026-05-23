@@ -196,11 +196,18 @@ def get_paragraph(uuid: str):
 
         # CFG edges from this paragraph
         cfg_edges = conn.execute("""
-            SELECT from_uuid, to_uuid, edge_type, condition, line_num
-            FROM control_flow
-            WHERE UPPER(source_file) = UPPER(?)
-            AND UPPER(from_uuid) = UPPER(?)
-            ORDER BY line_num
+            SELECT cf.id, cf.from_uuid, cf.to_uuid, cf.edge_type,
+                   cf.condition, cf.line_num,
+                   fp.uuid as from_para_uuid,
+                   tp.uuid as to_para_uuid
+            FROM control_flow cf
+            LEFT JOIN paragraphs fp ON UPPER(fp.name) = UPPER(cf.from_uuid)
+                AND UPPER(fp.source_file) = UPPER(cf.source_file)
+            LEFT JOIN paragraphs tp ON UPPER(tp.name) = UPPER(cf.to_uuid)
+                AND UPPER(tp.source_file) = UPPER(cf.source_file)
+            WHERE UPPER(cf.source_file) = UPPER(?)
+            AND UPPER(cf.from_uuid) = UPPER(?)
+            ORDER BY cf.line_num
         """, [sf, name]).fetchall()
 
         # CICS statements in this paragraph
@@ -246,15 +253,20 @@ def get_paragraph(uuid: str):
             "complexity":      cx,
             "cfg_edges": [
                 {
-                    "to_para":   r[1],
-                    "edge_type": r[2],
-                    "condition": r[3],
-                    "line":      r[4],
+                    "uuid":          r[0],
+                    "from_para":     r[1],
+                    "to_para":       r[2],
+                    "edge_type":     r[3],
+                    "condition":     r[4],
+                    "line":          r[5],
+                    "from_para_uuid": r[6],
+                    "to_para_uuid":  r[7],
                 }
                 for r in cfg_edges
             ],
             "cics_statements": [
                 {
+                    "uuid":   s.get("uuid", ""),
                     "verb":   s["verb"],
                     "params": s["params"],
                     "line":   s["line"],
@@ -274,6 +286,7 @@ def get_paragraph(uuid: str):
             ],
             "statements": [
                 {
+                    "uuid": m.get("uuid", ""),
                     "type": m.get("type", ""),
                     "line": m.get("line", 0),
                     "raw":  m.get("raw", "")[:100],
@@ -1328,6 +1341,25 @@ def get_program_spec(program_name: str, refresh: bool = False):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/slice/{program_name}")
+def get_program_slice(program_name: str):
+    """
+    Returns the structured artifact slice sent to the LLM for spec generation.
+    Use this to verify Rule 1 compliance — no raw source in the context.
+    """
+    from src.llm.retrieval import assemble_program_slice, format_slice_for_llm
+    try:
+        slice_data = assemble_program_slice(program_name.upper())
+        context    = format_slice_for_llm(slice_data)
+        return {
+            "program":       program_name.upper(),
+            "slice_data":    slice_data,
+            "formatted_context": context,
+            "rule1_note":    "No raw COBOL source — only structured artifacts with UUIDs",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

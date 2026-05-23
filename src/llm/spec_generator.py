@@ -80,11 +80,14 @@ Generate the specification:"""
         "model":        "gpt-5.4-mini",
         "tokens_used":  tokens_used,
         "artifact_slice": {
-            "paragraphs": len(slice_data.get("paragraphs", [])),
-            "symbols":    len(slice_data.get("symbols", [])),
-            "cics_stmts": len(slice_data.get("cics_statements", [])),
-            "file_ops":   len(slice_data.get("file_io", [])),
-            "comments":   len(slice_data.get("comments", [])),
+            "paragraphs":     len(slice_data.get("paragraphs", [])),
+            "symbols":        len(slice_data.get("symbols", [])),
+            "cics_stmts":     len(slice_data.get("cics_statements", [])),
+            "file_ops":       len(slice_data.get("file_io", [])),
+            "comments":       len(slice_data.get("comments", [])),
+            "business_rules": len(slice_data.get("business_rules", [])),
+            "def_use":        len(slice_data.get("def_use", [])),
+            "cfg_edges":      len(slice_data.get("cfg_edges", [])),
         },
     }
 

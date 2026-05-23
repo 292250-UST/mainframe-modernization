@@ -35,6 +35,7 @@ DOWNSTREAM CONSUMERS:
 import json
 from pathlib import Path
 from typing import Optional
+import hashlib
 
 from src.utils.logger import get_logger
 from src.layers.l1_ast.ast_node import (
@@ -97,8 +98,17 @@ class ASTTransformer:
         program_name  = parse_result.get("program", source_file.replace(".cbl","").replace(".CBL",""))
         paragraphs    = parse_result.get("paragraphs", [])
         para_stmts    = parse_result.get("paragraph_statements", [])
-        # Build lookup: para_name -> statements[]
-        stmt_lookup   = {p["name"]: p.get("statements", []) for p in para_stmts} if para_stmts else {}
+        # Build lookup: para_name -> statements[] with stable UUIDs
+        def _add_stmt_uuid(stmts, src_file):
+            for s in stmts:
+                key = f"{src_file}:{s.get('line',0)}:{s.get('type','')}"
+                s["uuid"] = hashlib.sha256(key.encode()).hexdigest()[:32]
+            return stmts
+
+        stmt_lookup = {
+            p["name"]: _add_stmt_uuid(p.get("statements", []), source_file)
+            for p in para_stmts
+        } if para_stmts else {}
         total_lines   = provenance_map.summary()["total_lines"] if provenance_map else 0
         copybooks     = provenance_map.get_copybooks_used() if provenance_map else []
 
