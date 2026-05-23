@@ -672,6 +672,126 @@ def retrieve_artifact(uuid: str):
                 "source_file":     sym[8],
             }
 
+        # 3. paragraphs table
+        row = conn.execute("""
+            SELECT uuid, name, source_file, start_line, end_line,
+                   statement_count, complexity, program_uuid
+            FROM paragraphs WHERE uuid = ?
+        """, [uuid]).fetchone()
+        if row:
+            return {
+                "uuid": row[0], "kind": "ParagraphNode",
+                "name": row[1], "source_file": row[2],
+                "start_line": row[3], "end_line": row[4],
+                "statement_count": row[5], "complexity": row[6],
+                "program_uuid": row[7],
+                "retrieve_via": f"/paragraph/{row[0]}"
+            }
+
+        # 4. business_rules table
+        row = conn.execute("""
+            SELECT uuid, program_uuid, kind, predicate_raw,
+                   then_summary, else_summary, source_file, line_num
+            FROM business_rules WHERE uuid = ?
+        """, [uuid]).fetchone()
+        if row:
+            return {
+                "uuid": row[0], "kind": f"BusinessRule:{row[2]}",
+                "program_uuid": row[1],
+                "predicate": row[3],
+                "then": row[4], "else": row[5],
+                "source_file": row[6], "line_num": row[7],
+                "retrieve_via": f"/businessrules/{row[1]}"
+            }
+
+        # 5. control_flow table
+        row = conn.execute("""
+            SELECT id, program_uuid, from_uuid, to_uuid,
+                   edge_type, condition, source_file, line_num
+            FROM control_flow WHERE id = ?
+        """, [uuid]).fetchone()
+        if row:
+            return {
+                "uuid": row[0], "kind": "CFGEdge",
+                "program_uuid": row[1],
+                "from_para": row[2], "to_para": row[3],
+                "edge_type": row[4], "condition": row[5],
+                "source_file": row[6], "line_num": row[7]
+            }
+
+        # 6. call_graph table
+        row = conn.execute("""
+            SELECT id, caller_uuid, callee_uuid, call_type,
+                   call_target, source_file, line_num
+            FROM call_graph WHERE id = ?
+        """, [uuid]).fetchone()
+        if row:
+            return {
+                "uuid": row[0], "kind": "CallEdge",
+                "caller": row[1], "callee": row[2],
+                "call_type": row[3], "call_target": row[4],
+                "source_file": row[5], "line_num": row[6]
+            }
+
+        # 7. def_use table
+        row = conn.execute("""
+            SELECT id, data_item_uuid, operation,
+                   stmt_text, source_file, line_num
+            FROM def_use WHERE id = ?
+        """, [uuid]).fetchone()
+        if row:
+            return {
+                "uuid": row[0], "kind": "DefUseEntry",
+                "variable": row[1], "operation": row[2],
+                "stmt_text": row[3],
+                "source_file": row[4], "line_num": row[5]
+            }
+
+        # 8. ims_io table
+        row = conn.execute("""
+            SELECT id, program_uuid, segment_name,
+                   operation, pcb_name, source_file, line_num
+            FROM ims_io WHERE id = ?
+        """, [uuid]).fetchone()
+        if row:
+            return {
+                "uuid": row[0], "kind": "IMSAccess",
+                "program": row[1], "segment": row[2],
+                "operation": row[3], "pcb": row[4],
+                "source_file": row[5], "line_num": row[6]
+            }
+
+        # 9. mq_io table
+        row = conn.execute("""
+            SELECT id, program_uuid, queue_name,
+                   operation, source_file, line_num
+            FROM mq_io WHERE id = ?
+        """, [uuid]).fetchone()
+        if row:
+            return {
+                "uuid": row[0], "kind": "MQAccess",
+                "program": row[1], "queue": row[2],
+                "operation": row[3],
+                "source_file": row[4], "line_num": row[5]
+            }
+
+        # 10. CICS statements (stored in JSON artifact not DuckDB)
+        cics_path = OUT_DIR / "artifacts" / "layer3" / "cics_statements.json"
+        if cics_path.exists():
+            cics_data = json.loads(cics_path.read_text())
+            for stmt in cics_data.get("statements", []):
+                if stmt.get("uuid") == uuid:
+                    return {
+                        "uuid":        stmt["uuid"],
+                        "kind":        "CICSStatement",
+                        "verb":        stmt.get("verb"),
+                        "params":      stmt.get("params", {}),
+                        "paragraph":   stmt.get("paragraph"),
+                        "source_file": stmt.get("source_file"),
+                        "line_num":    stmt.get("line"),
+                        "raw":         stmt.get("raw","")[:100],
+                    }
+
         raise HTTPException(
             status_code=404,
             detail=f"UUID '{uuid}' not found in any artifact table"
@@ -796,6 +916,28 @@ def get_cfg_visual(program_name: str):
     conn = get_db()
     try:
         prog = program_name.upper()
+
+        # If UUID passed instead of name — resolve to program name
+        if len(prog) == 32 and prog.isalnum():
+            row = conn.execute("""
+                SELECT payload_json->>'program_name' as name
+                FROM nodes WHERE uuid = ?
+                OR uuid = (SELECT program_uuid FROM paragraphs WHERE uuid = ?)
+                LIMIT 1
+            """, [prog, prog]).fetchone()
+            if row and row[0]:
+                prog = row[0].upper()
+            else:
+                # Try paragraphs table
+                row = conn.execute("""
+                    SELECT n.payload_json->>'program_name'
+                    FROM paragraphs p
+                    JOIN nodes n ON p.program_uuid = n.uuid
+                    WHERE p.uuid = ?
+                    LIMIT 1
+                """, [prog]).fetchone()
+                if row and row[0]:
+                    prog = row[0].upper()
 
         # Get paragraphs
         paras = conn.execute("""
@@ -1360,6 +1502,64 @@ def get_program_slice(program_name: str):
         }
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+@app.get("/explore", response_class=HTMLResponse)
+def get_explorer_index():
+    """Interactive graph explorer — entry point showing all programs."""
+    conn = get_db()
+    try:
+        programs = conn.execute("""
+            SELECT payload_json->>'program_name' as name, source_file
+            FROM nodes WHERE kind = 'ProgramNode'
+            ORDER BY name
+        """).fetchall()
+    finally:
+        conn.close()
+
+    prog_list = "".join([
+        f'<a href="/explore/{p[0]}" style="display:block;padding:6px 12px;'
+        f'margin:3px 0;border:1px solid #1e3a5f;border-radius:3px;'
+        f'color:#60a5fa;font-family:Courier New,monospace;font-size:12px;'
+        f'text-decoration:none;background:#0f1a2e" '
+        f'onmouseover="this.style.background=\'#1e3a5f\'" '
+        f'onmouseout="this.style.background=\'#0f1a2e\'">'
+        f'{p[0]}</a>'
+        for p in programs if p[0]
+    ])
+
+    return HTMLResponse(content=f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>CardDemo Explorer</title>
+<style>
+  body{{background:#0a0e1a;color:#e2e8f0;font-family:'Courier New',monospace;
+        display:flex;flex-direction:column;align-items:center;padding:40px 20px}}
+  h1{{color:#60a5fa;letter-spacing:3px;font-size:18px;margin-bottom:8px}}
+  p{{color:#64748b;font-size:11px;margin-bottom:24px}}
+  .grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:700px;width:100%}}
+</style></head><body>
+<h1>CARDDEMO GRAPH EXPLORER</h1>
+<p>Select a program to explore its artifacts, connections and specifications</p>
+<div class="grid">{prog_list}</div>
+</body></html>""")
+
+
+@app.get("/explore/{program_name}", response_class=HTMLResponse)
+def get_explorer(program_name: str):
+    """
+    Interactive D3.js graph explorer for any program.
+    Shows all artifacts — paragraphs, symbols, CFG, business rules,
+    call graph, copybooks, file I/O, IMS, MQ — as a navigable graph.
+    Click nodes to inspect. Double-click to expand.
+    """
+    from pathlib import Path
+    template_path = Path(__file__).parent.parent.parent / "out" / "demo" / "explore_template.html"
+
+    if template_path.exists():
+        html = template_path.read_text(encoding="utf-8")
+    else:
+        raise HTTPException(status_code=500, detail="Explorer template not found")
+
+    html = html.replace('{PROGRAM}', program_name.upper())
+    return HTMLResponse(content=html)
 
 if __name__ == "__main__":
     import uvicorn
