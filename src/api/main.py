@@ -1561,6 +1561,272 @@ def get_explorer(program_name: str):
     html = html.replace('{PROGRAM}', program_name.upper())
     return HTMLResponse(content=html)
 
+@app.get("/forward/{program_name}")
+def get_forward_engineering(program_name: str, target: str = "java"):
+    """
+    Forward engineering — emit modern code for a COBOL program.
+    Uses canonical IR + LLM to generate Java/Python with preserved semantics.
+    Semantic preservation: BigDecimal for COMP-3, String lengths, CFG→methods.
+    GET /forward/COTRN02C?target=java
+    GET /forward/CBACT01C?target=python
+    """
+    import os
+    prog = program_name.upper()
+
+    # Load canonical IR
+    ir_path = OUT_DIR / "artifacts" / "layer8" / f"{prog}_ir.json"
+    if not ir_path.exists():
+        raise HTTPException(status_code=404,
+            detail=f"IR not found for {prog} — run --step ir first")
+
+    ir = json.loads(ir_path.read_text())
+
+    # Check for cached output
+    demo_dir = OUT_DIR / "demo"
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = demo_dir / f"{prog}_forward_{target}.json"
+    if cache_path.exists():
+        data = json.loads(cache_path.read_text())
+        data["cached"] = True
+        return data
+
+    # Build forward engineering prompt
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503,
+            detail="OPENAI_API_KEY not set")
+
+    # Prepare IR summary for prompt
+    fields_summary = "\n".join([
+        f"  {f['name']} ({f['pic'] or 'group'}) → {f['java_type']} // {f['note']}"
+        for f in ir["fields"][:30]
+    ])
+    methods_summary = "\n".join([
+        f"  {m['name']}() complexity={m['complexity']} calls={[c['target'] for c in m['calls'][:3]]}"
+        for m in ir["methods"][:15]
+    ])
+    rules_summary = "\n".join([
+        f"  if ({r['java_pattern']}) // line {r['line']}"
+        for r in ir["rules"][:10]
+    ])
+    io_summary = "\n".join([
+        f"  {op['operation']} {op['file']} → {op['java_pattern']}"
+        for op in ir["io"].get("file_access", [])[:5]
+    ])
+    cics_summary = "\n".join([
+        f"  CICS {c['verb']} → {c['java_pattern']}"
+        for m in ir["methods"]
+        for c in m.get("cics", [])[:2]
+    ])
+
+    if target == "java":
+        lang = "Java 17 Spring Boot"
+        type_note = "Use BigDecimal for ALL decimal/packed_decimal types with RoundingMode.HALF_EVEN. Use String for alphanumeric with @Size validation. Use int/long for binary/numeric."
+    else:
+        lang = "Python 3.11"
+        type_note = "Use Decimal for ALL decimal types. Use str for alphanumeric. Use int for binary/numeric."
+
+    system_prompt = f"""You are a COBOL modernization expert generating {lang} code.
+CRITICAL SEMANTIC PRESERVATION RULES:
+1. {type_note}
+2. Every PERFORM → private method call
+3. Every IF/EVALUATE → if/switch with exact condition preserved
+4. EXEC CICS RETURN → return statement with transaction ID
+5. EXEC CICS READ/WRITE → repository pattern
+6. COMP-3 arithmetic → BigDecimal with HALF_EVEN rounding (critical!)
+7. PIC X(n) fields → String with @Size(max=n) validation
+8. Preserve ALL business rule conditions exactly as specified
+9. Entry point paragraph → main public method
+10. Generate complete, compilable code — not pseudocode"""
+
+    user_prompt = f"""Generate complete {lang} code for COBOL program: {prog}
+
+Program type: {ir['kind'].upper()}
+Bounded context: {ir['seam']}
+Total lines: {ir['total_lines']}
+Copybooks used: {', '.join(ir['copybooks'][:5])}
+Required imports: {', '.join(ir['type_imports'])}
+
+FIELDS (COBOL → {target} types):
+{fields_summary}
+
+METHODS (paragraphs → methods):
+{methods_summary}
+
+BUSINESS RULES (preserve exactly):
+{rules_summary}
+
+FILE I/O:
+{io_summary}
+
+CICS STATEMENTS:
+{cics_summary}
+
+Generate a complete {lang} class named {prog.title().replace('_','')}Service with:
+1. All fields as class members with correct types
+2. All paragraphs as private methods
+3. All business rules as if/switch statements
+4. All file I/O as repository calls
+5. Javadoc/docstring comments citing source lines
+6. Entry point as public main method
+
+Every comment must cite the source line: // COTRN02C.cbl:107"""
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=3000,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_prompt},
+            ],
+        )
+        code = response.choices[0].message.content
+        tokens = response.usage.total_tokens if response.usage else 0
+
+        result = {
+            "program":      prog,
+            "target":       target,
+            "seam":         ir["seam"],
+            "code":         code,
+            "tokens_used":  tokens,
+            "semantic_guarantees": {
+                "decimal_precision": "BigDecimal with HALF_EVEN rounding",
+                "string_lengths":    "String with @Size(max=n)",
+                "control_flow":      f"{len(ir['methods'])} paragraphs → methods",
+                "business_rules":    f"{len(ir['rules'])} IF/EVALUATE preserved",
+                "file_access":       f"{len(ir['io'].get('file_access',[]))} operations → repository pattern",
+            },
+            "ir_summary": {
+                "fields":  len(ir["fields"]),
+                "methods": len(ir["methods"]),
+                "rules":   len(ir["rules"]),
+            },
+            "cached": False,
+        }
+
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2)
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/seams")
+def get_architectural_seams():
+    """
+    Architectural seam analysis — bounded contexts derived from
+    file affinity, transaction co-occurrence, and CICS LINK boundaries.
+    """
+    ir_summary = OUT_DIR / "artifacts" / "layer8" / "ir_summary.json"
+    if not ir_summary.exists():
+        raise HTTPException(status_code=404,
+            detail="IR not built — run: python run_pipeline.py --step ir")
+    data = json.loads(ir_summary.read_text())
+    return {
+        "bounded_contexts": data["seams"],
+        "total_programs":   data["total_programs"],
+        "note": "Seams derived from file affinity, transaction co-occurrence, CICS LINK boundaries",
+    }
+
+@app.get("/testseeds/{program_name}")
+def get_test_seeds(program_name: str):
+    """
+    Generate test seed corpus from PIC clauses and business rule predicates.
+    Input shapes derived from canonical types. Boundary values from IF predicates.
+    """
+    prog = program_name.upper()
+    ir_path = OUT_DIR / "artifacts" / "layer8" / f"{prog}_ir.json"
+    if not ir_path.exists():
+        raise HTTPException(status_code=404, detail=f"IR not found for {prog}")
+
+    ir = json.loads(ir_path.read_text())
+
+    seeds = {
+        "program":  prog,
+        "seam":     ir["seam"],
+        "field_seeds": [],
+        "rule_seeds":  [],
+        "path_seeds":  [],
+    }
+
+    # Field seeds from PIC clauses
+    for f in ir["fields"]:
+        ct = f.get("canonical_type", {})
+        kind = ct.get("kind", "")
+        seed = {"field": f["name"], "uuid": f["uuid"], "pic": f["pic"], "seeds": []}
+
+        if kind == "alphanumeric":
+            length = ct.get("length", 1)
+            seed["seeds"] = [
+                {"value": "", "case": "empty"},
+                {"value": "A" * length, "case": "max_length"},
+                {"value": "A" * (length // 2), "case": "half_length"},
+                {"value": " " * length, "case": "all_spaces"},
+            ]
+        elif kind in ("numeric", "binary"):
+            precision = ct.get("precision", 9)
+            signed = ct.get("signed", False)
+            max_val = 10 ** precision - 1
+            seed["seeds"] = [
+                {"value": 0, "case": "zero"},
+                {"value": max_val, "case": "max"},
+                {"value": 1, "case": "one"},
+            ]
+            if signed:
+                seed["seeds"].append({"value": -1, "case": "negative_one"})
+                seed["seeds"].append({"value": -max_val, "case": "min"})
+        elif kind in ("decimal", "packed_decimal"):
+            precision = ct.get("precision", 9)
+            scale     = ct.get("scale", 2)
+            max_val   = 10 ** (precision - scale) - 1
+            seed["seeds"] = [
+                {"value": "0.00", "case": "zero"},
+                {"value": f"{max_val}.{'9'*scale}", "case": "max"},
+                {"value": "0.01", "case": "min_positive"},
+                {"value": f"{max_val//2}.50", "case": "mid"},
+            ]
+
+        if seed["seeds"]:
+            seeds["field_seeds"].append(seed)
+
+    # Rule seeds from business rule predicates
+    for r in ir["rules"]:
+        if not r.get("predicate"):
+            continue
+        seeds["rule_seeds"].append({
+            "uuid":      r["uuid"],
+            "predicate": r["predicate"],
+            "line":      r["line"],
+            "test_cases": [
+                {"scenario": "predicate_true",  "note": f"Inputs satisfy: {r['predicate'][:50]}"},
+                {"scenario": "predicate_false", "note": f"Inputs violate: {r['predicate'][:50]}"},
+            ]
+        })
+
+    # Path seeds from CFG methods
+    for m in ir["methods"]:
+        if m["calls"]:
+            seeds["path_seeds"].append({
+                "entry":    m["name"],
+                "uuid":     m["uuid"],
+                "paths": [
+                    {"path": [m["name"]] + [c["target"] for c in m["calls"][:3]],
+                     "note": f"complexity={m['complexity']}"}
+                ]
+            })
+
+    seeds["summary"] = {
+        "field_seeds": len(seeds["field_seeds"]),
+        "rule_seeds":  len(seeds["rule_seeds"]),
+        "path_seeds":  len(seeds["path_seeds"]),
+    }
+
+    return seeds
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

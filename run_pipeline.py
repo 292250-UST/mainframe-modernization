@@ -22,7 +22,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='CardDemo Modernization Pipeline')
     parser.add_argument('--corpus', default=str(ROOT / 'corpus'), help='Path to CardDemo corpus')
     parser.add_argument('--out', default=str(ROOT / 'out'), help='Output directory')
-    parser.add_argument('--step', choices=['parse', 'graph', 'load','spec', 'api', 'all'], default='all')
+    parser.add_argument('--step', choices=['parse','graph','load','ir','spec','api','all'])
     parser.add_argument('--port', default=8000, type=int, help='API port (default: 8000)')
     return parser.parse_args()
 
@@ -228,6 +228,14 @@ def step_api(args):
         reload=False
     )
 
+def step_ir(args):
+    """Build canonical IR for all programs."""
+    logger.info("Step: Building canonical IR (Layer 8)...")
+    sys.path.insert(0, str(ROOT))
+    from src.layers.l8_ir.canonical_ir import build_all_ir
+    summary = build_all_ir()
+    logger.info(f"IR built for {summary['total_programs']} programs across {len(summary['seams'])} seams")
+
 def main():
     args = parse_args()
     logger.info('CardDemo Modernization Pipeline starting...')
@@ -238,6 +246,7 @@ def main():
         step_parse(args)
         step_graph(args)
         step_load(args)
+        step_ir(args)
         step_spec(args)
         step_api(args)
     else:
@@ -245,6 +254,7 @@ def main():
             'parse': step_parse,
             'graph': step_graph,
             'load':  step_load,
+            'ir':    step_ir,
             'spec':  step_spec,
             'api':   step_api,
         }
