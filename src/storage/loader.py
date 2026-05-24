@@ -441,6 +441,31 @@ def _load_day4_artifacts(db_path: Optional[Path] = None) -> None:
                     VALUES (?,?,?,?,?,?)
                 """, rows)
             logger.info(f"JCL dependencies: {len(rows)} loaded")
+
+        # DB2 schema from DDL
+        db2_path = OUT_DIR / "artifacts" / "layer6" / "db2_schema.json"
+        if db2_path.exists():
+            import uuid as uuid_lib2
+            data = json.loads(db2_path.read_text())
+            rows = []
+            for t in data.get("tables", []):
+                cols = ",".join(c["name"] for c in t.get("columns", [])[:10])
+                rows.append((
+                    str(uuid_lib.uuid4()).replace("-","")[:32],
+                    "DB2_DDL",
+                    t["table_name"],
+                    cols,
+                    "SCHEMA",
+                    None, None, "DB2_DDL", 0
+                ))
+            if rows:
+                conn.executemany("""
+                    INSERT OR IGNORE INTO db_io
+                    (id, program_uuid, table_name, columns, operation,
+                     cursor_name, stmt_uuid, source_file, line_num)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                """, rows)
+            logger.info(f"DB2 schema: {len(rows)} table definitions loaded")
     finally:
         conn.close()
 
