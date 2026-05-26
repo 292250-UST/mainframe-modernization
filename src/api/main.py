@@ -21,6 +21,8 @@ Required endpoints per brief §8:
     GET /coverage                    — parse coverage report
 """
 
+from dotenv import load_dotenv
+load_dotenv()
 import json
 import duckdb
 from pathlib import Path

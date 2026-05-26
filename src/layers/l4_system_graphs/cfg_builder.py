@@ -208,6 +208,9 @@ def run(corpus_dir: Optional[Path] = None) -> dict:
 
     # Load into DuckDB
     conn = duckdb.connect(str(DB_PATH))
+    # Check if nodes table exists — skip UUID lookup if not
+    tables = [r[0] for r in conn.execute("SHOW TABLES").fetchall()]
+    nodes_exist = 'nodes' in tables
     try:
         rows = []
         for cfg in all_cfgs:
@@ -219,7 +222,17 @@ def run(corpus_dir: Optional[Path] = None) -> dict:
                 AND UPPER(source_file) = UPPER(?)
                 LIMIT 1
             """, [cfg["source_file"]]).fetchone()
-            prog_uuid = row[0] if row else prog
+            # prog_uuid = row[0] if row else prog
+            if nodes_exist:
+                row = conn.execute("""
+                    SELECT uuid FROM nodes
+                    WHERE kind = 'ProgramNode'
+                    AND UPPER(source_file) = UPPER(?)
+                    LIMIT 1
+                """, [cfg["source_file"]]).fetchone()
+                prog_uuid = row[0] if row else prog
+            else:
+                prog_uuid = prog
 
             for edge in cfg["edges"]:
                 edge_id = str(uuid_lib.uuid4()).replace("-", "")[:32]

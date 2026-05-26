@@ -7,6 +7,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from config import OUT_DIR, CORPUS_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,7 +79,8 @@ def step_graph(args):
     logger.info("Step 2: Building all graphs and extractors...")
     sys.path.insert(0, str(ROOT))
     from config import OUT_DIR
-
+    # Ensure DB directory exists for extractors that write to DuckDB
+    (OUT_DIR / "graph").mkdir(parents=True, exist_ok=True)
     # --- Call graph + transaction flow + file I/O ---
     from src.layers.l4_system_graphs.call_graph import build_call_graph
     from src.layers.l4_system_graphs.transaction_flow import build_transaction_flow
