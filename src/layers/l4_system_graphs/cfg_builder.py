@@ -103,8 +103,6 @@ def extract_cfg_from_file(cbl_file: Path) -> dict:
         # PERFORM VARYING
         m = PERFORM_VARYING.match(line)
         if m:
-            target = PERFORM_VARYING.match(line)
-            # Extract target from full line
             parts = line.strip().split()
             if len(parts) >= 2:
                 tgt = parts[1].upper()
@@ -206,11 +204,21 @@ def run(corpus_dir: Optional[Path] = None) -> dict:
 
     logger.info(f"Total CFG edges: {len(all_edges)}")
 
+    # Ensure DB directory exists
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     # Load into DuckDB
     conn = duckdb.connect(str(DB_PATH))
-    # Check if nodes table exists — skip UUID lookup if not
+
+    # Check which tables exist
     tables = [r[0] for r in conn.execute("SHOW TABLES").fetchall()]
     nodes_exist = 'nodes' in tables
+
+    # Initialize schema if control_flow table missing
+    if 'control_flow' not in tables:
+        from src.storage.loader import init_schema
+        init_schema(conn)
+
     try:
         rows = []
         for cfg in all_cfgs:
