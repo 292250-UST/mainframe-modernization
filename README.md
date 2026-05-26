@@ -56,26 +56,28 @@ LLM Forward Eng.      Java Spring Boot with BigDecimal + RoundingMode.HALF_EVEN
 
 ---
 
-## Quick Start
 
-```bash
-# 1. Copy environment file and add your OpenAI API key
-cp .env.example .env
-# Edit .env and set: OPENAI_API_KEY=sk-xxx...
 
-# 2. Install dependencies
-pip install -r requirements.txt
 
-# 3. Run full pipeline
-python run_pipeline.py --step all
+## Java + Maven Installation (Windows)
 
-# 4. API only (if artifacts already built)
-python run_pipeline.py --step api
+**Install JDK 17:**
+1. Download from https://adoptium.net/temurin/releases/?version=17
+2. Select Windows / x64 / JDK / 17 — download `.msi`
+3. Run installer — PATH is set automatically
+
+**Install Maven:**
+1. Download from https://maven.apache.org/download.cgi
+2. Unzip to `C:\maven`
+3. Add `C:\maven\bin` to system PATH:
+
+```powershell
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\maven\bin", "Machine")
 ```
 
-Swagger UI:      http://localhost:8000/docs
-CFG Viewer:      http://localhost:8000/cfg/COTRN02C
-Graph Explorer:  http://localhost:8000/explore/COTRN02C
+4. Restart terminal and verify: `mvn --version`
+
+---
 
 ---
 
@@ -83,7 +85,7 @@ Graph Explorer:  http://localhost:8000/explore/COTRN02C
 
 | Tool | Version | Purpose |
 |---|---|---|
-| Python | 3.11+ | Pipeline code |
+| Python | 3.14.3 | Pipeline code |
 | Java JDK | 17+ | Required to build + run ProLeap |
 | Maven | 3.9+ | Required to build ProLeap from source |
 | Git | Any | Clone repos |
@@ -98,6 +100,9 @@ mvn --version       # Apache Maven 3.9+
 git --version
 ```
 
+
+---
+
 ---
 
 ## Installation Guide
@@ -105,7 +110,7 @@ git --version
 ### Step 1 — Clone this repo
 
 ```powershell
-git clone --recurse-submodules <YOUR_REPO_URL> mainframe-modernization
+git clone --recurse-submodules https://github.com/292250-UST/mainframe-modernization mainframe-modernization
 cd mainframe-modernization
 ```
 
@@ -122,6 +127,7 @@ dir corpus\app\app-authorization-ims-db2-mq\cbl\
 
 ```powershell
 python -m venv .venv
+Set-ExecutionPolicy Unrestricted -Scope Process  # Windows only
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # Mac/Linux
 
@@ -511,27 +517,8 @@ mainframe-modernization/
 | CFG Visualizer | SVG/D3 (self-contained HTML, live from DuckDB) |
 | Graph Explorer | D3.js force-directed (interactive, live from DuckDB) |
 | Forward Eng. | Java Spring Boot (BigDecimal + RoundingMode.HALF_EVEN) |
-| Python | 3.11+ |
+| Python | 3.14.3 |
 
----
-
-## Java + Maven Installation (Windows)
-
-**Install JDK 17:**
-1. Download from https://adoptium.net/temurin/releases/?version=17
-2. Select Windows / x64 / JDK / 17 — download `.msi`
-3. Run installer — PATH is set automatically
-
-**Install Maven:**
-1. Download from https://maven.apache.org/download.cgi
-2. Unzip to `C:\maven`
-3. Add `C:\maven\bin` to system PATH:
-
-```powershell
-[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\maven\bin", "Machine")
-```
-
-4. Restart terminal and verify: `mvn --version`
 
 ---
 
