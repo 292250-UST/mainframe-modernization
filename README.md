@@ -532,6 +532,44 @@ mainframe-modernization/
 
 ---
 
+## Screenshots
+
+### Graph Explorer — `GET /explore/COTRN02C`
+Interactive D3.js force-directed artifact graph. 94 nodes, 159 edges for COTRN02C. Click any node to inspect UUID, source line, properties.
+
+![Graph Explorer](docs/screenshots/screenshot_explorer.png)
+
+---
+
+### CFG Visualizer — `GET /cfg/COTRN02C`
+Control flow graph — 18 paragraphs, 112 edges, complexity=55. Hover any node for details.
+
+![CFG Visualizer](docs/screenshots/screenshot_cfg.png)
+
+---
+
+### Swagger UI — `GET /docs`
+25+ REST endpoints documented and testable. OAS 3.1 compliant.
+
+![Swagger UI](docs/screenshots/screenshot_swagger.png)
+
+---
+
+### Spec Generation — `GET /spec/COTRN02C`
+LLM-generated grounded specification with UUID citations throughout. Every claim machine-verifiable.
+
+![Spec Generation](docs/screenshots/screenshot_spec.png)
+
+---
+
+### Forward Engineering — `GET /forward/COTRN02C?target=java`
+Java Spring Boot code generated from canonical IR. BigDecimal precision, @Size constraints, 18 paragraphs → methods.
+
+![Forward Engineering](docs/screenshots/screenshot_forward.png)
+
+
+---
+
 ## Mermaid Diagrams
 
 Generated from live DuckDB artifact store. Regenerate: `python scripts/generate_mermaid.py`
