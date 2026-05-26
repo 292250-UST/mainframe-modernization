@@ -32,6 +32,7 @@ def get_logger(name: str) -> logging.Logger:
 
     logger.addHandler(console)
     logger.addHandler(file_handler)
+    logger.propagate = False  # prevent double logging via root logger
     return logger
 
 
