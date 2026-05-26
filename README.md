@@ -9,45 +9,49 @@ Parses the [AWS CardDemo corpus](https://github.com/aws-samples/aws-mainframe-mo
 
 ## Parse Coverage
 
-| Source | Files | Parsed | Rate |
-|---|---|---|---|
-| COBOL (.cbl) | 31 | 30 | 96.8% |
-| JCL (.jcl) | 38 | 38 | 100% |
-| BMS (.bms) | 17 | 17 | 100% |
-| CSD (.csd) | 1 | 1 | 100% |
-| ASM (.asm) | 2 | 2 | 100% |
-| **Overall** | **89** | **88** | **98.9%** |
+| Source | Files | Parsed | Rate | Notes |
+|---|---|---|---|---|
+| COBOL (.cbl) | 39 | 38 | 97.4% | 31 main + 8 extension |
+| JCL (.jcl) | 43 | 43 | 100% | 38 main + 5 extension |
+| BMS (.bms) | 19 | 19 | 100% | 17 main + 2 extension |
+| CSD (.csd) | 2 | 2 | 100% | 1 main + 1 extension |
+| ASM (.asm) | 2 | 2 | 100% | MVSWAIT + COBDATFT |
+| **Overall** | **105** | **104** | **99.0%** | |
+
+**Only failure:** `COACTUPC.cbl` — template placeholders (TESTVAR1), correctly rejected by ProLeap.
 
 ---
 
 ## Architecture
 
 ```
-CardDemo Corpus (179 files)
+CardDemo Corpus (39 COBOL + extension module)
          |
          v
-[Copybook Preprocessor]  resolves COPY + provenance tracking
+[Copybook Preprocessor]  resolves COPY + provenance tracking (75 copybooks)
          |
          v
 [ProLeap COBOL Parser]   ANTLR4-based, Java subprocess
          |
          v
-Layer 1: AST              521 nodes, stable SHA-256 UUIDs
-Layer 2: Symbols          6,535 symbols + 491 paragraphs
-Layer 3: EXEC CICS        150 statements, 19 verbs
-Layer 4: Graphs           Call(57) + File I/O(245) + TxFlow(53) + CFG(761)
-Layer 5: Analysis         Move chains(2,779) + Business rules(887)
-Layer 6: Resources        BMS(441 fields) + CSD(18 transactions)
-Layer 7: Coverage         98.9% parse rate, honest gap reporting
+Layer 1: AST              664 nodes, stable SHA-256 UUIDs
+Layer 2: Symbols          8,126 symbols + 626 paragraphs
+Layer 3: EXEC CICS/DLI   150 CICS statements + 52 DLI + 4 MQ
+Layer 4: Graphs           Call(57) + File I/O(245) + TxFlow(53) + CFG(761) + IMS(52)
+Layer 5: Analysis         Def-use(3,403) + Business rules(887)
+Layer 6: Resources        BMS(441 fields) + CSD(21 transactions) + VSAM(8) + DB2(3) + IMS(4)
+Layer 7: Coverage         97.4% parse rate + dead code(138) + clone report(4 pairs)
+Layer 8: Forward Eng.     Canonical IR(38 programs) + 8 bounded contexts + Java emitter
          |
          v
 DuckDB (17 tables, all layers queryable)
          |
          v
-FastAPI REST (15 endpoints + Swagger UI + CFG Visualizer)
+FastAPI REST (25+ endpoints + Swagger UI + CFG Visualizer + Graph Explorer)
          |
          v
-LLM Spec Generation (grounded citations: [LINE] [VAR] [PARA] [COPY])
+LLM Spec Generation   grounded citations: [UUID:xxx][LINE:xxx]
+LLM Forward Eng.      Java Spring Boot with BigDecimal + RoundingMode.HALF_EVEN
 ```
 
 ---
@@ -55,19 +59,27 @@ LLM Spec Generation (grounded citations: [LINE] [VAR] [PARA] [COPY])
 ## Quick Start
 
 ```bash
+# 1. Copy environment file and add your OpenAI API key
+cp .env.example .env
+# Edit .env and set: OPENAI_API_KEY=sk-xxx...
+
+# 2. Install dependencies
 pip install -r requirements.txt
-python run_pipeline.py --step all        # full pipeline
-python run_pipeline.py --step api        # API only (port 8000)
+
+# 3. Run full pipeline
+python run_pipeline.py --step all
+
+# 4. API only (if artifacts already built)
+python run_pipeline.py --step api
 ```
 
-Swagger UI: http://localhost:8000/docs  
-CFG Viewer: http://localhost:8000/cfg/COTRN02C
+Swagger UI:      http://localhost:8000/docs
+CFG Viewer:      http://localhost:8000/cfg/COTRN02C
+Graph Explorer:  http://localhost:8000/explore/COTRN02C
 
 ---
 
 ## Prerequisites
-
-Make sure the following are installed before starting:
 
 | Tool | Version | Purpose |
 |---|---|---|
@@ -81,7 +93,7 @@ Make sure the following are installed before starting:
 ```powershell
 python --version    # Python 3.11+
 java --version      # openjdk 17+
-javac --version     # javac 17+  (confirms JDK not just JRE)
+javac --version     # javac 17+
 mvn --version       # Apache Maven 3.9+
 git --version
 ```
@@ -93,33 +105,25 @@ git --version
 ### Step 1 — Clone this repo
 
 ```powershell
-git clone <YOUR_REPO_URL> mainframe-modernization
+git clone --recurse-submodules <YOUR_REPO_URL> mainframe-modernization
 cd mainframe-modernization
 ```
 
-### Step 2 — Clone the CardDemo corpus
+### Step 2 — Verify CardDemo corpus
 
-```powershell
-git submodule add https://github.com/aws-samples/aws-mainframe-modernization-carddemo corpus
-```
-
-When cloning this repo fresh, use:
-```powershell
-git clone --recurse-submodules <YOUR_REPO_URL> mainframe-modernization
-```
-
-Verify:
 ```powershell
 dir corpus\app\cbl\
-# Should show CBACT01C.cbl, COTRN02C.cbl, etc.
+# Should show CBACT01C.cbl, COTRN02C.cbl, etc. (31 files)
+dir corpus\app\app-authorization-ims-db2-mq\cbl\
+# Should show COPAUA0C.cbl, COPAUS0C.cbl, etc. (8 extension files)
 ```
 
 ### Step 3 — Set up Python virtual environment
 
 ```powershell
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Mac/Linux
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Mac/Linux
 
 pip install -r requirements.txt
 ```
@@ -131,53 +135,37 @@ python -c "import duckdb, fastapi, openai; print('deps OK')"
 
 ### Step 4 — Clone and build ProLeap COBOL parser
 
-ProLeap is a Java COBOL parser. It is added as a git submodule and built once from source using Maven.
-
 ```powershell
-# Add ProLeap as submodule
-git submodule add https://github.com/uwol/proleap-cobol-parser third_party/proleap-cobol-parser
-
-# Build the JAR (requires JDK 17 + Maven)
+# ProLeap is already a submodule — just build it
 cd third_party\proleap-cobol-parser
 mvn clean package -DskipTests
-
-# Copy runtime dependencies
 mvn dependency:copy-dependencies -DoutputDirectory=target\dependency
-
 cd ..\..
 ```
 
-> Note: The `target/` folder (built JAR + dependencies) is NOT tracked by the submodule.
-> You must run the Maven build locally after cloning.
-
-Verify the JAR was built:
+Verify:
 ```powershell
 dir third_party\proleap-cobol-parser\target\proleap-cobol-parser-4.0.0.jar
 ```
 
 ### Step 5 — Build the Java wrapper
 
-ProLeap is a library (not a standalone executable), so a thin Java wrapper accepts a `.cbl` file + copybooks directory, calls ProLeap, and outputs JSON to stdout for Python to consume.
-
-Compile the wrapper:
 ```powershell
 javac -cp "third_party\proleap-cobol-parser\target\proleap-cobol-parser-4.0.0.jar;third_party\proleap-cobol-parser\target\dependency\*" third_party\cobol-parser-wrapper\CobolParserWrapper.java -d third_party\cobol-parser-wrapper\
 ```
 
-Verify — you should see `CobolParserWrapper.class`:
+Verify:
 ```powershell
-dir third_party\cobol-parser-wrapper\
+dir third_party\cobol-parser-wrapper\CobolParserWrapper.class
 ```
 
 ### Step 6 — Configure paths
 
-Ensure `config.py` at project root contains correct paths:
+`config.py` at project root — verify paths are correct:
 
 ```python
 from pathlib import Path
-
 ROOT = Path(__file__).parent
-
 PROLEAP_JAR  = ROOT / "third_party" / "proleap-cobol-parser" / "target" / "proleap-cobol-parser-4.0.0.jar"
 WRAPPER_DIR  = ROOT / "third_party" / "cobol-parser-wrapper"
 CORPUS_DIR   = ROOT / "corpus"
@@ -185,20 +173,29 @@ COPYBOOK_DIR = ROOT / "corpus" / "app" / "cpy"
 OUT_DIR      = ROOT / "out"
 ```
 
-> **Important:** Never hardcode paths anywhere in the pipeline. Always import from `config.py`.
-
 ### Step 7 — Set LLM API key
 
 ```powershell
-$env:NVIDIA_API_KEY = "nvapi-xxxx"   # Windows
-# export NVIDIA_API_KEY="nvapi-xxxx" # Mac/Linux
+# Copy example and add your key
+cp .env.example .env
 ```
+
+Edit `.env`:
+```
+OPENAI_API_KEY=sk-your-key-here
+```
+
+Or set as environment variable:
+```powershell
+$env:OPENAI_API_KEY = "sk-xxx"   # Windows
+# export OPENAI_API_KEY="sk-xxx" # Mac/Linux
+```
+
+> Note: LLM key is only required for `GET /spec/{program}` and `GET /forward/{program}` endpoints. All other endpoints work without it.
 
 ---
 
 ## Smoke Test
-
-Run the smoke test to verify the full Python → Java → ProLeap → JSON pipeline:
 
 ```powershell
 python tests/test_proleap.py
@@ -209,8 +206,6 @@ Expected output:
 Result: {'program': 'CBACT01C', 'status': 'ok'}
 ```
 
-> Note: ProLeap INFO logs will appear in the terminal — these are normal, not errors.
-
 ---
 
 ## Running the Pipeline
@@ -219,10 +214,12 @@ Result: {'program': 'CBACT01C', 'status': 'ok'}
 # Run all steps end-to-end
 python run_pipeline.py --step all
 
-# Or run individual steps
-python run_pipeline.py --step parse   # Parse all source files
-python run_pipeline.py --step graph   # Build all graphs
-python run_pipeline.py --step load    # Load into DuckDB
+# Individual steps
+python run_pipeline.py --step parse   # Parse all source files (COBOL+JCL+BMS+CSD+ASM)
+python run_pipeline.py --step graph   # Build all graphs + extractors
+python run_pipeline.py --step load    # Load into DuckDB (drops + recreates)
+python run_pipeline.py --step ir      # Build canonical IR (Layer 8, 38 programs)
+python run_pipeline.py --step spec    # Pre-generate LLM specs (cached)
 python run_pipeline.py --step api     # Start REST API (port 8000)
 ```
 
@@ -230,23 +227,100 @@ python run_pipeline.py --step api     # Start REST API (port 8000)
 
 ## API Endpoints
 
+### Core (required by brief)
 | Endpoint | Description |
 |---|---|
 | GET /health | Health check |
-| GET /coverage | Parse coverage report |
+| GET /coverage | Parse coverage report (Layer 7) |
 | GET /program/{name} | Program metadata + UUID |
-| GET /paragraph/{uuid} | Paragraph AST |
-| GET /dataitem/{uuid} | Data definition |
+| GET /paragraph/{uuid} | Paragraph AST + CFG + rules + statements |
+| GET /dataitem/{uuid} | Data definition with canonical type |
 | GET /callers/{name} | Call graph — who calls this |
 | GET /callees/{name} | Call graph — what this calls |
+| GET /controlflow/{name} | CFG edges (JSON) |
+| GET /defuse/{program} | Def-use chains grouped by variable |
+| GET /businessrules/{name} | IF/EVALUATE rule catalog |
 | GET /fileaccesses/{name} | File I/O operations |
 | GET /transactionflow/{transid} | CICS navigation graph |
 | GET /jobchain/{name} | JCL dependency chain |
 | GET /copybookconsumers/{name} | Copybook usage |
-| GET /retrieve/{uuid} | Artifact slice retrieval |
-| GET /businessrules/{name} | IF/EVALUATE rule catalog |
-| GET /controlflow/{uuid} | CFG edges (JSON) |
-| **GET /cfg/{name}** | **Interactive CFG visualizer (HTML, live from DuckDB)** |
+
+### Specification & Forward Engineering
+| Endpoint | Description |
+|---|---|
+| GET /spec/{program} | LLM spec generation (grounded, cached) |
+| GET /spec/{program}?refresh=true | Force regenerate spec |
+| GET /slice/{program} | LLM context slice (Rule 1 verification) |
+| GET /forward/{program}?target=java | Java Spring Boot forward engineering |
+| GET /forward/{program}?target=python | Python forward engineering |
+| GET /seams | Architectural seam analysis (8 bounded contexts) |
+| GET /testseeds/{program} | Test seed corpus from PIC + predicates |
+
+### Optional Modules
+| Endpoint | Description |
+|---|---|
+| GET /db2 | DB2 DDL schema (3 tables) |
+| GET /ims | IMS DLI statements (52) |
+| GET /ims?program=COPAUA0C | Filter by program |
+| GET /mq | MQ access graph (4 calls) |
+| GET /vsam | VSAM file schemas (8 files) |
+| GET /gdg | GDG registry (7 bases) |
+| GET /dataformats/{program} | Advanced data format breakdown |
+
+### Visualization & Navigation
+| Endpoint | Description |
+|---|---|
+| GET /cfg/{program} | **Interactive CFG visualizer (HTML, live)** |
+| GET /explore | All programs entry point |
+| GET /explore/{program} | **D3.js interactive artifact graph explorer** |
+| GET /retrieve/{uuid} | Universal UUID resolver (all 10 tables) |
+| GET /connectivity/{program} | Full connectivity summary |
+
+---
+
+## Visual Tools
+
+### CFG Visualizer — `GET /cfg/{program}`
+Interactive SVG control flow graph — paragraphs as nodes, PERFORM edges as arrows.
+Live from DuckDB. Open directly in browser.
+
+```
+http://localhost:8000/cfg/COTRN02C
+→ 18 paragraphs, 56 CFG edges, color-coded by edge type
+```
+
+### Graph Explorer — `GET /explore/{program}`
+D3.js force-directed interactive artifact graph. All artifact types as colored nodes:
+
+| Color | Node Type |
+|---|---|
+| 🔵 Blue | Programs |
+| 🟣 Purple | Paragraphs |
+| 🟢 Green | Symbols |
+| 🟡 Amber | Business Rules |
+| 🩵 Cyan | JCL Jobs |
+| 🩷 Pink | IMS Segments |
+| 🟡 Yellow | MQ Queues |
+| 🟠 Orange | CICS Statements |
+| 🟤 Violet | Copybooks |
+
+**Interactions:**
+- **Single click** → inspect UUID, properties, source line, action buttons
+- **Double click** → expand connected nodes (loads from API)
+- **Drag** → pin node in place
+- **Legend click** → filter graph by node type (dims others)
+- **↺ button** → unpin all nodes, restart layout
+- **⌂ button** → reset zoom
+- **☰ button** → toggle sidebar panel
+
+```
+http://localhost:8000/explore           ← all 38 programs entry point
+http://localhost:8000/explore/COTRN02C  ← Transaction Add full artifact graph
+http://localhost:8000/explore/COPAUA0C  ← IMS+MQ extension program graph
+http://localhost:8000/explore/CBTRN02C  ← Batch program + JCL chain
+```
+
+Every node has a **Retrieve Artifact** button → calls `GET /retrieve/{uuid}` to verify source location.
 
 ---
 
@@ -254,18 +328,23 @@ python run_pipeline.py --step api     # Start REST API (port 8000)
 
 | Metric | Value |
 |---|---|
-| Total symbols | 6,535 |
-| Symbols from copybooks | 1,797 (27.5%) |
-| Total paragraphs | 491 |
-| Total statements | 5,094 |
-| EXEC CICS statements | 150 (19 verbs) |
-| MOVE statements | 2,779 |
-| Call graph edges | 57 (31 CALL + 26 XCTL) |
+| COBOL programs parsed | 38/39 (97.4%) |
+| Total symbols | 8,126 |
+| Total paragraphs | 626 |
+| Def-use chains | 3,403 |
 | CFG edges | 761 |
+| Business rules | 887 (774 IF + 113 EVALUATE) |
+| EXEC CICS statements | 150 (19 verbs) |
+| EXEC DLI statements | 52 (9 verbs) |
+| MQ calls | 4 |
+| Call graph edges | 57 (31 CALL + 26 XCTL) |
 | File I/O operations | 245 |
 | Transaction flow edges | 53 |
-| Business rules | 887 (774 IF + 113 EVALUATE) |
 | DuckDB tables | 17 |
+| Canonical IR programs | 38 (Layer 8) |
+| Bounded contexts (seams) | 8 |
+| Clone pairs detected | 4 |
+| Empty paragraphs (dead code) | 138 |
 
 ---
 
@@ -274,36 +353,43 @@ python run_pipeline.py --step api     # Start REST API (port 8000)
 Transaction Add screen — complexity=55, 18 paragraphs, 1,160 lines.
 
 ```bash
-python -m src.llm.spec_generator COTRN02C
-# Output: out/demo/COTRN02C_spec.txt
+# Generate grounded spec
+curl http://localhost:8000/spec/COTRN02C
+
+# Inspect LLM context (Rule 1 verification — no raw COBOL)
+curl http://localhost:8000/slice/COTRN02C
+
+# Forward engineer to Java
+curl "http://localhost:8000/forward/COTRN02C?target=java"
+
+# Interactive graph explorer
+open http://localhost:8000/explore/COTRN02C
 ```
 
-CFG visualization: http://localhost:8000/cfg/COTRN02C
-
 Sample grounded claim from generated spec:
-> "COTRN02C receives user input from COTRN2A via CICS RECEIVE [LINE:539]
-> and validates card number [VAR:XREF-CARD-NUM] against XREF file [LINE:576]"
+> "MAIN-PARA [UUID:994395d163f4caca58c1703e6c4188ec][LINE:107] controls execution
+> and validates EIBCALEN [UUID:919580a49b614b699b366ba9d0777c2b][LINE:115]"
+
+Verify any UUID: `GET /retrieve/994395d163f4caca58c1703e6c4188ec`
 
 ---
 
 ## Demo B — Batch Chain (POSTTRAN → INTCALC → CREASTMT)
 
 ```bash
-python -m src.llm.spec_generator CBTRN02C  # POSTTRAN
-python -m src.llm.spec_generator CBACT04C  # INTCALC
-python -m src.llm.spec_generator CBSTM03A  # CREASTMT
-# Output: out/demo/*_spec.txt
+curl http://localhost:8000/jobchain/POSTTRAN
+curl http://localhost:8000/spec/CBTRN02C
+curl http://localhost:8000/spec/CBACT04C
+curl "http://localhost:8000/forward/CBSTM03A?target=java"
 ```
 
 End-to-end data lineage:
 ```
 DALYTRAN input
-  -> CBTRN02C validates + posts -> TCATBALF updated
-  -> CBACT04C computes interest -> TRANSACT updated
-  -> CBSTM03A generates statements -> STATEMNT.PS + HTML
+  -> CBTRN02C validates + posts  -> TCATBALF updated
+  -> CBACT04C computes interest  -> TRANSACT updated
+  -> CBSTM03A generates statements -> STATEMNT.PS
 ```
-
-See: docs/demo_batch_chain.md
 
 ---
 
@@ -311,11 +397,16 @@ See: docs/demo_batch_chain.md
 
 | Gap | Reason | Impact |
 |---|---|---|
-| COACTUPC.cbl | Template placeholders (TESTVAR1) | No AST — documented in coverage report |
-| EXEC SQL/DLI/MQ | 0 occurrences in corpus | Tables empty — verified by grep |
-| JCL ANTLR grammar | Regex chosen (0 PROC/IF/INCLUDE in corpus) | 100% JCL coverage achieved |
-| BMS copybook stubs (17) | Generated from .bms source | Programs parse correctly |
-| DFHAID / DFHBMSCA | IBM standard stubs from documentation | High accuracy |
+| COACTUPC.cbl fails | Template placeholders (TESTVAR1) | 1 program without AST — documented |
+| screen_map table empty | BMS→program cross-link not implemented | Layer 4 gap |
+| migration_risk table empty | Data exists in artifacts, not aggregated | Layer 7 gap |
+| predicate_resolved empty | Symbol resolution during rule extraction not built | Layer 5 gap |
+| Slicing index | Backward dataflow analysis not implemented | Layer 3 gap |
+| Arithmetic spec | COMPUTE expression tree not normalized | Layer 5 gap |
+| EXEC SQL | 0 occurrences in corpus — DB2 via DDL only | Verified by grep |
+| JCL PROC/IF/INCLUDE | 0 occurrences in corpus — regex parser used | 100% coverage |
+| Dead code (178 paras) | Fall-through reachability not tracked | 138 confirmed empty reported |
+| Clone report | Structural fingerprint only — no AST diffing | 4 pairs found |
 
 ---
 
@@ -324,51 +415,86 @@ See: docs/demo_batch_chain.md
 ```
 mainframe-modernization/
 │
-├── corpus/                      # AWS CardDemo source (git submodule — pinned SHA)
+├── corpus/                          # AWS CardDemo source (git submodule)
 │   └── app/
-│       ├── cbl/                 # 31 COBOL programs
-│       ├── cpy/                 # Copybooks (+ generated stubs)
-│       ├── jcl/                 # 38 JCL batch jobs
-│       ├── bms/                 # 17 BMS screen maps
-│       ├── csd/                 # CICS CSD file
-│       └── asm/                 # 2 Assembler stubs
+│       ├── cbl/                     # 31 COBOL programs (main)
+│       ├── cpy/                     # 66 copybooks + generated stubs
+│       ├── jcl/                     # 38 JCL batch jobs
+│       ├── bms/                     # 17 BMS screen maps
+│       ├── csd/                     # 1 CSD file (CARDDEMO.CSD)
+│       ├── asm/                     # 2 Assembler stubs
+│       └── app-authorization-ims-db2-mq/  # Extension module
+│           ├── cbl/                 # 8 extension COBOL programs
+│           ├── cpy/                 # 9 extension copybooks
+│           ├── jcl/                 # 5 extension JCL files
+│           ├── bms/                 # 2 extension BMS maps
+│           ├── csd/                 # 1 extension CSD (CRDDEMO2.csd)
+│           ├── ims/                 # 4 IMS DBD + 4 PSB files
+│           └── ddl/                 # 6 DB2 DDL files
 │
 ├── third_party/
-│   ├── proleap-cobol-parser/    # ProLeap source (git submodule)
-│   │   └── target/
-│   │       ├── proleap-cobol-parser-4.0.0.jar  # built locally via mvn
-│   │       └── dependency/      # Runtime dependencies
-│   └── cobol-parser-wrapper/    # Thin Java wrapper (written by us)
+│   ├── proleap-cobol-parser/        # ProLeap source (git submodule)
+│   └── cobol-parser-wrapper/        # Thin Java wrapper
 │       ├── CobolParserWrapper.java
 │       └── CobolParserWrapper.class
 │
-├── tools/
-│   └── antlr-4.13.1-complete.jar
-│
 ├── src/
-│   ├── parsers/                 # COBOL, JCL, BMS, CSD, ASM parsers
-│   ├── preprocess/              # Copybook resolver + provenance tracker
-│   ├── layers/                  # AST, symbols, call graph, CFG, tx flow
-│   ├── storage/                 # DuckDB schema + loader
-│   ├── api/                     # FastAPI REST layer + CFG visualizer
-│   ├── llm/                     # Artifact retrieval + spec generator
-│   └── coverage_report.py
+│   ├── parsers/                     # COBOL, JCL, BMS, CSD, ASM parsers
+│   │   ├── batch_parser.py
+│   │   ├── jcl_parser.py
+│   │   ├── bms_parser.py
+│   │   ├── csd_parser.py
+│   │   ├── exec_cics_extractor.py
+│   │   ├── exec_dli_extractor.py
+│   │   ├── db2_ddl_parser.py
+│   │   └── ims_dbd_parser.py
+│   ├── preprocess/                  # Copybook resolver + provenance tracker
+│   ├── layers/
+│   │   ├── l1_ast/                  # AST nodes + transformer
+│   │   ├── l2_symbols/              # Symbol table + type system
+│   │   ├── l4_system_graphs/        # CFG, call graph, transaction flow
+│   │   └── l8_ir/                   # Canonical IR (Layer 8)
+│   │       └── canonical_ir.py
+│   ├── storage/                     # DuckDB schema + loader
+│   │   ├── schema.sql
+│   │   └── loader.py
+│   ├── api/                         # FastAPI REST (25+ endpoints)
+│   │   └── main.py
+│   └── llm/                         # Artifact retrieval + spec/forward generator
+│       ├── retrieval.py
+│       └── spec_generator.py
+│
+├── scripts/                         # Utility scripts
+│   ├── corpus_tally.py
+│   ├── optional_modules_tally.py
+│   ├── verify_output_format.py
+│   ├── build_dead_code_report.py
+│   ├── build_clone_report.py
+│   └── build_vsam_schemas.py
 │
 ├── tests/
-│   ├── test_proleap.py          # Smoke test
-│   └── regression/              # UUID stability tests
+│   └── test_proleap.py              # Smoke test
 │
-├── out/                         # Generated artifacts (git-ignored)
-│   ├── artifacts/               # JSON artifacts by layer
-│   ├── graph/                   # artifacts.duckdb
-│   ├── demo/                    # Generated specs
-│   └── reports/                 # Coverage report
+├── out/                             # Generated artifacts (git-ignored)
+│   ├── artifacts/
+│   │   ├── layer1/                  # AST JSON (30 files)
+│   │   ├── layer2/                  # Symbols + paragraphs JSON
+│   │   ├── layer3/                  # CICS/DLI/MQ statements
+│   │   ├── layer4/                  # Graphs JSON
+│   │   ├── layer5/                  # Business logic JSON
+│   │   ├── layer6/                  # Resource definitions JSON
+│   │   ├── layer7/                  # Coverage + dead code + clone reports
+│   │   ├── layer8/                  # Canonical IR JSON (38 programs)
+│   │   ├── layer1_ext/              # Extension module AST
+│   │   ├── layer2_ext/              # Extension module symbols
+│   │   └── layer6_ext/              # Extension module resources
+│   ├── graph/                       # artifacts.duckdb (17 tables)
+│   └── demo/                        # Generated specs + forward engineering
 │
-├── docs/                        # Architecture, READMEs, demos
-├── scripts/                     # Utility + debug scripts
-├── config.py                    # All paths — no hardcoding anywhere
+├── .env.example                     # Required environment variables
+├── config.py                        # All paths — no hardcoding
 ├── requirements.txt
-├── run_pipeline.py              # One-command pipeline orchestrator
+├── run_pipeline.py                  # One-command pipeline orchestrator
 └── README.md
 ```
 
@@ -381,16 +507,15 @@ mainframe-modernization/
 | COBOL Parser | ProLeap 4.0.0 (ANTLR4, Java) |
 | Storage | DuckDB 1.5.2 |
 | API | FastAPI 0.135.3 + uvicorn |
-| LLM | NVIDIA API (qwen3-coder-480b) via OpenAI SDK |
+| LLM | OpenAI API (gpt-4o-mini) |
 | CFG Visualizer | SVG/D3 (self-contained HTML, live from DuckDB) |
-| Python | 3.12 |
-| Graphs | networkx 3.6.1 |
+| Graph Explorer | D3.js force-directed (interactive, live from DuckDB) |
+| Forward Eng. | Java Spring Boot (BigDecimal + RoundingMode.HALF_EVEN) |
+| Python | 3.11+ |
 
 ---
 
 ## Java + Maven Installation (Windows)
-
-If `mvn --version` is not recognised:
 
 **Install JDK 17:**
 1. Download from https://adoptium.net/temurin/releases/?version=17
@@ -399,16 +524,14 @@ If `mvn --version` is not recognised:
 
 **Install Maven:**
 1. Download from https://maven.apache.org/download.cgi
-2. Download `apache-maven-3.9.x-bin.zip`
-3. Unzip to `C:\maven`
-4. Add `C:\maven\bin` to system PATH:
+2. Unzip to `C:\maven`
+3. Add `C:\maven\bin` to system PATH:
 
 ```powershell
-# Run as Administrator
 [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\maven\bin", "Machine")
 ```
 
-5. Restart terminal and verify: `mvn --version`
+4. Restart terminal and verify: `mvn --version`
 
 ---
 
@@ -418,7 +541,7 @@ If `mvn --version` is not recognised:
 |---|---|---|
 | `COACTUPC.cbl` fails to parse | Template placeholders (TESTVAR1) | Known — in coverage report |
 | ProLeap INFO logs in terminal | ProLeap uses SLF4J logging by design | Expected — not errors |
-| `pip install maven` does nothing | Maven is not a Python package | Use system installer above |
+| Double log lines in pipeline | Python logging initialized twice | Cosmetic only — data loads once correctly |
 
 ---
 
@@ -429,6 +552,5 @@ If `mvn --version` is not recognised:
 | ProLeap COBOL Parser | https://github.com/uwol/proleap-cobol-parser | MIT |
 | AWS CardDemo Corpus | https://github.com/aws-samples/aws-mainframe-modernization-carddemo | Apache 2.0 |
 | ANTLR4 | https://www.antlr.org | BSD |
-| antlr4-python3-runtime | https://pypi.org/project/antlr4-python3-runtime | BSD |
 | DuckDB | https://duckdb.org | MIT |
 | FastAPI | https://fastapi.tiangolo.com | MIT |
