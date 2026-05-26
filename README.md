@@ -110,7 +110,12 @@ git --version
 ### Step 1 — Clone this repo
 
 ```powershell
+# Clone latest
 git clone --recurse-submodules https://github.com/292250-UST/mainframe-modernization mainframe-modernization
+cd mainframe-modernization
+
+# Or clone the championship-final tagged version (recommended for judges)
+git clone --recurse-submodules --branch championship-final https://github.com/292250-UST/mainframe-modernization mainframe-modernization
 cd mainframe-modernization
 ```
 
