@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CardDemo Explorer — {PROGRAM}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0e1a;font-family:'Courier New',monospace;color:#e2e8f0;overflow:hidden;height:100vh}
+
+#header{
+  position:fixed;top:0;left:0;right:0;height:48px;
+  background:rgba(10,14,26,0.97);border-bottom:1px solid #1e3a5f;
+  display:flex;align-items:center;gap:16px;padding:0 20px;z-index:200
+}
+#header h1{font-size:13px;font-weight:700;color:#60a5fa;letter-spacing:2px}
+.badge{padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:1px}
+.b-blue{background:#0f2d5f;color:#60a5fa;border:1px solid #1d4ed8}
+.b-green{background:#0f3d2a;color:#4ade80;border:1px solid #166534}
+.b-amber{background:#3d2a0f;color:#fbbf24;border:1px solid #92400e}
+#header .meta{font-size:11px;color:#64748b;margin-left:auto}
+
+#sidebar{
+  position:fixed;top:48px;right:0;bottom:0;width:380px;
+  background:rgba(12,16,28,0.98);border-left:1px solid #1e3a5f;
+  overflow-y:auto;z-index:150;padding:16px;
+  transition:transform 0.25s ease
+}
+#sidebar.hidden{transform:translateX(100%)}
+#sidebar h2{font-size:12px;font-weight:700;color:#60a5fa;letter-spacing:2px;margin-bottom:12px}
+.detail-section{margin-bottom:16px;border-top:1px solid #1e3a5f;padding-top:12px}
+.detail-section h3{font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:8px;text-transform:uppercase}
+.detail-row{display:flex;justify-content:space-between;margin:4px 0;font-size:11px}
+.detail-label{color:#64748b}
+.detail-val{color:#e2e8f0;font-weight:700;text-align:right;max-width:200px;word-break:break-all}
+.uuid-val{color:#60a5fa;font-size:9px;cursor:pointer;word-break:break-all}
+.uuid-val:hover{color:#93c5fd;text-decoration:underline}
+.btn{
+  display:inline-block;padding:4px 10px;border-radius:3px;font-size:10px;
+  font-family:'Courier New',monospace;cursor:pointer;margin:3px 2px;
+  border:1px solid #1e3a5f;background:#0f1a2e;color:#94a3b8;
+  transition:all 0.15s
+}
+.btn:hover{background:#1e3a5f;color:#e2e8f0}
+.btn-primary{background:#1d4ed8;border-color:#2563eb;color:#fff}
+.btn-primary:hover{background:#2563eb}
+.btn-danger{background:#7f1d1d;border-color:#991b1b;color:#fca5a5}
+.tag{display:inline-block;padding:2px 6px;border-radius:2px;font-size:9px;margin:2px;font-family:'Courier New',monospace}
+.tag-blue{background:#0f2d5f;color:#93c5fd;border:1px solid #1e40af}
+.tag-green{background:#0f3d2a;color:#6ee7b7;border:1px solid #065f46}
+.tag-amber{background:#3d2a0f;color:#fcd34d;border:1px solid #92400e}
+.tag-purple{background:#2e1065;color:#d8b4fe;border:1px solid #5b21b6}
+.tag-red{background:#450a0a;color:#fca5a5;border:1px solid #7f1d1d}
+.tag-gray{background:#1e293b;color:#94a3b8;border:1px solid #334155}
+
+#canvas{position:fixed;top:48px;left:0;right:380px;bottom:0}
+#canvas.full{right:0}
+svg#graph{width:100%;height:100%}
+
+.node circle{cursor:pointer;transition:r 0.2s,opacity 0.2s}
+.node circle:hover{opacity:0.8}
+.node text{pointer-events:none;font-family:'Courier New',monospace;font-size:10px;fill:#e2e8f0}
+.node .sublabel{font-size:8px;fill:#64748b}
+
+.link{stroke-opacity:0.4;fill:none}
+.link-call{stroke:#3b82f6}
+.link-cfg{stroke:#f59e0b;stroke-dasharray:4,2}
+.link-copy{stroke:#a855f7}
+.link-fileio{stroke:#22c55e}
+.link-rule{stroke:#f97316}
+.link-jcl{stroke:#06b6d4}
+.link-ims{stroke:#ec4899}
+.link-mq{stroke:#facc15}
+
+#legend{
+  position:fixed;bottom:20px;left:20px;z-index:100;
+  background:rgba(12,16,28,0.95);border:1px solid #1e3a5f;
+  border-radius:6px;padding:12px;font-size:10px
+}
+#legend h3{color:#60a5fa;margin-bottom:8px;letter-spacing:1px}
+.leg{display:flex;align-items:center;gap:8px;margin:3px 0;color:#94a3b8}
+.leg-dot{width:10px;height:10px;border-radius:50%}
+.leg-line{width:20px;height:2px}
+.leg[data-type] { cursor: pointer; border-radius: 3px; padding: 2px 4px; transition: background 0.15s; }
+.leg[data-type]:hover { background: #1e3a5f; }
+.leg[data-type].active { background: #1e3a5f; outline: 1px solid #334155; }
+.leg[data-type].dimmed { opacity: 0.35; }
+
+#controls{
+  position:fixed;top:60px;left:20px;z-index:100;display:flex;flex-direction:column;gap:8px
+}
+.ctrl-btn{
+  width:32px;height:32px;border-radius:4px;
+  background:rgba(12,16,28,0.95);border:1px solid #1e3a5f;
+  color:#94a3b8;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:all 0.15s
+}
+.ctrl-btn:hover{background:#1e3a5f;color:#e2e8f0}
+
+#toast{
+  position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  background:#1d4ed8;color:#fff;padding:8px 16px;border-radius:4px;
+  font-size:11px;opacity:0;transition:opacity 0.3s;z-index:300;pointer-events:none
+}
+
+#loading{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:#0a0e1a;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;z-index:500
+}
+#loading h2{color:#60a5fa;font-size:14px;letter-spacing:2px;margin-bottom:16px}
+#loading p{color:#64748b;font-size:11px;margin:4px 0}
+.spinner{width:32px;height:32px;border:2px solid #1e3a5f;border-top-color:#60a5fa;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <h2>LOADING GRAPH</h2>
+  <p id="loading-msg">Fetching program artifacts...</p>
+</div>
+
+<div id="header">
+  <h1>CARDDEMO EXPLORER</h1>
+  <span class="badge b-blue" id="prog-badge">{PROGRAM}</span>
+  <span class="badge b-green" id="node-count">0 nodes</span>
+  <span class="badge b-amber" id="edge-count">0 edges</span>
+  <span class="meta">Click any node to explore • Scroll to zoom • Drag to pan</span>
+</div>
+
+<div id="controls">
+  <button class="ctrl-btn" onclick="resetZoom()" title="Reset zoom">⌂</button>
+  <button class="ctrl-btn" onclick="toggleSidebar()" title="Toggle panel">☰</button>
+  <button class="ctrl-btn" onclick="expandAll()" title="Expand all">⊕</button>
+  <button class="ctrl-btn" onclick="resetGraph()" title="Reset — unpin all nodes" style="color:#f59e0b">↺</button>
+</div>
+
+<div id="canvas">
+  <svg id="graph">
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+        <path d="M2 1L8 5L2 9" fill="none" stroke="#64748b" stroke-width="1.5"/>
+      </marker>
+    </defs>
+    <g id="zoom-g">
+      <g id="links-g"></g>
+      <g id="nodes-g"></g>
+    </g>
+  </svg>
+</div>
+
+<div id="sidebar" class="hidden">
+  <h2 id="sidebar-title">SELECT A NODE</h2>
+  <div id="sidebar-content">
+    <p style="color:#64748b;font-size:11px">Click any node in the graph to inspect its artifacts and connections.</p>
+  </div>
+</div>
+
+<div id="legend">
+  <h3>NODE TYPES <span style="color:#475569;font-size:8px;margin-left:4px">CLICK TO FILTER</span></h3>
+  <div class="leg" data-type="program"  onclick="filterType('program')"><div class="leg-dot" style="background:#3b82f6"></div>Program</div>
+  <div class="leg" data-type="paragraph" onclick="filterType('paragraph')"><div class="leg-dot" style="background:#a855f7"></div>Paragraph</div>
+  <div class="leg" data-type="symbol"  onclick="filterType('symbol')"><div class="leg-dot" style="background:#22c55e"></div>Symbol</div>
+  <div class="leg" data-type="rule"    onclick="filterType('rule')"><div class="leg-dot" style="background:#f59e0b"></div>Business Rule</div>
+  <div class="leg" data-type="jcl"     onclick="filterType('jcl')"><div class="leg-dot" style="background:#06b6d4"></div>JCL Job</div>
+  <div class="leg" data-type="ims"     onclick="filterType('ims')"><div class="leg-dot" style="background:#ec4899"></div>IMS Segment</div>
+  <div class="leg" data-type="mq"      onclick="filterType('mq')"><div class="leg-dot" style="background:#facc15"></div>MQ Queue</div>
+  <div class="leg" data-type="copybook" onclick="filterType('copybook')"><div class="leg-dot" style="background:#8b5cf6"></div>Copybook</div>
+  <div class="leg" data-type="cics"    onclick="filterType('cics')"><div class="leg-dot" style="background:#f97316"></div>CICS Stmt</div>
+  <div style="margin-top:8px">
+    <button class="btn" onclick="clearFilter()" style="width:100%;margin:0">CLEAR FILTER</button>
+  </div>
+  <div style="margin-top:8px;border-top:1px solid #1e3a5f;padding-top:8px">
+  <h3 style="margin-bottom:6px">EDGE TYPES</h3>
+  <div class="leg"><div class="leg-line" style="background:#3b82f6"></div>CALL/XCTL</div>
+  <div class="leg"><div class="leg-line" style="background:#f59e0b"></div>CFG PERFORM</div>
+  <div class="leg"><div class="leg-line" style="background:#a855f7"></div>COPY</div>
+  <div class="leg"><div class="leg-line" style="background:#22c55e"></div>FILE I/O</div>
+  <div class="leg"><div class="leg-line" style="background:#f97316"></div>BUSINESS RULE</div>
+  <div class="leg"><div class="leg-line" style="background:#06b6d4"></div>JCL CHAIN</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const BASE = '';
+const PROGRAM = '{PROGRAM}';
+let simulation, svg, zoomG, linksG, nodesG;
+let nodes = [], links = [];
+let expandedNodes = new Set();
+let sidebarVisible = false;
+
+const nodeColors = {
+  program:  '#3b82f6',
+  paragraph:'#a855f7',
+  symbol:   '#22c55e',
+  rule:     '#f59e0b',
+  file:     '#06b6d4',
+  jcl:      '#06b6d4',
+  ims:      '#ec4899',
+  mq:       '#facc15',
+  copybook: '#8b5cf6',
+  cics:     '#f97316',
+  vsam:     '#22c55e',
+  gdg:      '#94a3b8',
+};
+
+const linkColors = {
+  call:  '#3b82f6',
+  cfg:   '#f59e0b',
+  copy:  '#a855f7',
+  fileio:'#22c55e',
+  rule:  '#f97316',
+  jcl:   '#06b6d4',
+  ims:   '#ec4899',
+  mq:    '#facc15',
+};
+
+function showLoading(msg) {
+  document.getElementById('loading-msg').textContent = msg;
+  document.getElementById('loading').style.display = 'flex';
+}
+function hideLoading() {
+  document.getElementById('loading').style.display = 'none';
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.opacity = '1';
+  setTimeout(() => t.style.opacity = '0', 2000);
+}
+
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(BASE + url);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+function addNode(id, label, type, data = {}) {
+  if (nodes.find(n => n.id === id)) return;
+  nodes.push({ id, label, type, data, x: Math.random()*600+100, y: Math.random()*400+100 });
+}
+
+function addLink(source, target, type) {
+  const exists = links.find(l =>
+    (l.source === source || l.source.id === source) &&
+    (l.target === target || l.target.id === target)
+  );
+  if (!exists) links.push({ source, target, type });
+}
+
+async function loadProgram(progName) {
+  showLoading(`Loading ${progName}...`);
+  const data = await fetchJSON(`/program/${progName}`);
+  if (!data) { hideLoading(); return; }
+
+  const progId = `prog:${progName}`;
+  addNode(progId, progName, 'program', data);
+
+  // Paragraphs
+  showLoading('Loading paragraphs...');
+  (data.paragraphs || []).forEach(p => {
+    const pid = `para:${p.uuid}`;
+    addNode(pid, p.name, 'paragraph', p);
+    addLink(progId, pid, 'cfg');
+  });
+
+  // Copybooks
+  (data.copybooks || []).forEach(cb => {
+    const cname = typeof cb === 'string' ? cb : cb.name;
+    const cid = `copy:${cname}`;
+    addNode(cid, cname, 'copybook', {name: cname});
+    addLink(progId, cid, 'copy');
+  });
+
+  // Top symbols (key data items)
+  showLoading('Loading symbols...');
+  const dataformats = await fetchJSON(`/dataformats/${progName}`);
+  if (dataformats?.by_kind) {
+    Object.entries(dataformats.by_kind).forEach(([kind, data]) => {
+      (data.items || []).slice(0, 3).forEach(s => {
+        const sid = `symbol:${s.uuid}`;
+        addNode(sid, s.name, 'symbol', s);
+        addLink(progId, sid, 'copy');
+      });
+    });
+  }
+
+  // Callees
+  showLoading('Loading call graph...');
+  const callees = await fetchJSON(`/callees/${progName}`);
+  (callees?.callees || []).forEach(c => {
+    const cid = `prog:${c.call_target}`;
+    addNode(cid, c.call_target, 'program', {});
+    addLink(progId, cid, 'call');
+  });
+
+  // File accesses
+  showLoading('Loading file I/O...');
+  const files = await fetchJSON(`/fileaccesses/${progName}`);
+  (files?.operations || files?.accesses || []).forEach(f => {
+    const fid = `file:${f.file_name || f.file}`;
+    addNode(fid, f.file_name || f.file, 'file', f);
+    addLink(progId, fid, 'fileio');
+  });
+
+  // Business rules (first 5)
+  showLoading('Loading business rules...');
+  const rules = await fetchJSON(`/businessrules/${progName}`);
+  (rules?.rules || []).slice(0, 5).forEach(r => {
+    const rid = `rule:${r.uuid}`;
+    addNode(rid, `${r.kind}: ${(r.predicate||r.predicate_raw||'').slice(0,20)}`, 'rule', r);
+    addLink(progId, rid, 'rule');
+  });
+
+  // Connectivity
+  showLoading('Loading connectivity...');
+  const conn = await fetchJSON(`/connectivity/${progName}`);
+  (conn?.jcl_jobs || []).forEach(j => {
+    const jid = `jcl:${j.job_name}`;
+    addNode(jid, j.job_name, 'jcl', j);
+    addLink(jid, progId, 'jcl');
+  });
+
+  // IMS
+  const ims = await fetchJSON(`/ims?program=${progName}`);
+  (ims?.dli_statements || []).slice(0, 3).forEach(s => {
+    const iid = `ims:${s.segment}`;
+    addNode(iid, s.segment, 'ims', s);
+    addLink(progId, iid, 'ims');
+  });
+
+  // MQ
+  const mq = await fetchJSON(`/mq?program=${progName}`);
+  (mq?.calls || []).forEach(c => {
+    const mid = `mq:${c.queue || c.operation}`;
+    addNode(mid, c.queue || c.operation, 'mq', c);
+    addLink(progId, mid, 'mq');
+  });
+
+  // CICS statements from slice
+  showLoading('Loading CICS statements...');
+  const slice = await fetchJSON(`/slice/${progName}`);
+  const cicsStmts = slice?.slice_data?.cics_statements || [];
+  cicsStmts.slice(0, 5).forEach(s => {
+    if (!s.verb) return;
+    const cid = `cics:${s.uuid || s.verb + s.line}`;
+    addNode(cid, `CICS ${s.verb}`, 'cics', {
+      uuid:      s.uuid || '',
+      verb:      s.verb,
+      params:    s.params || {},
+      line:      s.line,
+      paragraph: s.paragraph,
+    });
+    addLink(progId, cid, 'rule');
+  });
+
+  expandedNodes.add(progId);
+  hideLoading();
+  updateGraph();
+
+  // Select program node
+  setTimeout(() => selectNode(nodes.find(n => n.id === progId)), 500);
+}
+
+async function expandNode(node) {
+  if (expandedNodes.has(node.id)) return;
+  expandedNodes.add(node.id);
+  showLoading(`Expanding ${node.label}...`);
+
+  if (node.type === 'paragraph') {
+    const data = await fetchJSON(`/paragraph/${node.data.uuid}`);
+    if (data) {
+      // CFG edges → target paragraphs
+      (data.cfg_edges || []).forEach(e => {
+        const pid = `para:${e.to_para_uuid || e.to_para}`;
+        addNode(pid, e.to_para, 'paragraph', {uuid: e.to_para_uuid, name: e.to_para});
+        addLink(node.id, pid, 'cfg');
+      });
+      // CICS
+      (data.cics_statements || []).slice(0, 3).forEach(s => {
+        const cid = `cics:${s.verb}:${s.line}`;
+        addNode(cid, `CICS ${s.verb}`, 'cics', s);
+        addLink(node.id, cid, 'rule');
+      });
+      // Business rules
+      (data.business_rules || []).slice(0, 3).forEach(r => {
+        const rid = `rule:${r.uuid}`;
+        addNode(rid, `IF: ${(r.predicate||'').slice(0,20)}`, 'rule', r);
+        addLink(node.id, rid, 'rule');
+      });
+      node.data = {...node.data, ...data};
+    }
+  }
+
+  if (node.type === 'program' && !node.id.startsWith('prog:' + PROGRAM)) {
+    await loadProgram(node.label);
+    return;
+  }
+
+  if (node.type === 'copybook') {
+    const consumers = await fetchJSON(`/copybookconsumers/${node.label}`);
+    (consumers?.consumers || []).slice(0, 5).forEach(c => {
+      const pid = `prog:${c.program || c.program_name}`;
+      addNode(pid, c.program || c.program_name, 'program', {});
+      addLink(pid, node.id, 'copy');
+    });
+  }
+
+  if (node.type === 'jcl') {
+    const chain = await fetchJSON(`/jobchain/${node.label}`);
+    (chain?.steps || []).forEach(s => {
+      if (s.program) {
+        const pid = `prog:${s.program}`;
+        addNode(pid, s.program, 'program', {});
+        addLink(node.id, pid, 'jcl');
+      }
+    });
+    (chain?.known_chains || []).forEach(c => {
+      c.jobs.forEach((j, i) => {
+        if (i < c.jobs.length - 1) {
+          addLink(`jcl:${j}`, `jcl:${c.jobs[i+1]}`, 'jcl');
+          addNode(`jcl:${c.jobs[i+1]}`, c.jobs[i+1], 'jcl', {});
+        }
+      });
+    });
+  }
+
+  hideLoading();
+  updateGraph();
+}
+
+function selectNode(node) {
+  if (!node) return;
+  showSidebar(node);
+}
+
+function showSidebar(node) {
+  const sidebar = document.getElementById('sidebar');
+  const title   = document.getElementById('sidebar-title');
+  const content = document.getElementById('sidebar-content');
+
+  title.textContent = node.label;
+  sidebarVisible = true;
+  sidebar.classList.remove('hidden');
+  document.getElementById('canvas').classList.remove('full');
+
+  let html = '';
+
+  // Type badge
+  html += `<div style="margin-bottom:12px">
+    <span class="tag tag-blue">${node.type.toUpperCase()}</span>
+    ${node.data.uuid ? `<span class="uuid-val" onclick="copyUUID('${node.data.uuid}')" title="Click to copy UUID">[UUID:${node.data.uuid.slice(0,12)}...]</span>` : ''}
+  </div>`;
+
+  // Actions
+  html += `<div style="margin-bottom:12px">`;
+  if (node.type === 'program') {
+    const cfgTarget = node.data.program_name || node.data.program || node.label;
+    html += `<button class="btn btn-primary" onclick="window.open('/cfg/${cfgTarget}','_blank')">View CFG</button>`;
+    html += `<button class="btn" onclick="window.open('/spec/${node.label}','_blank')">Gen Spec</button>`;
+    html += `<button class="btn" onclick="window.open('/slice/${node.label}','_blank')">LLM Slice</button>`;
+    html += `<button class="btn" onclick="loadProgram('${node.label}')">Expand</button>`;
+  }
+  if (node.type === 'paragraph') {
+    html += `<button class="btn btn-primary" onclick="window.open('/paragraph/${node.data.uuid}','_blank')">Full AST</button>`;
+    html += `<button class="btn" onclick="expandNode(currentNode)">Expand CFG</button>`;
+  }
+  if (node.type === 'copybook') {
+    html += `<button class="btn btn-primary" onclick="window.open('/copybookconsumers/${node.label}','_blank')">Consumers</button>`;
+    html += `<button class="btn" onclick="expandNode(currentNode)">Expand</button>`;
+  }
+  if (node.type === 'rule') {
+    html += `<button class="btn btn-primary" onclick="window.open('/retrieve/${node.data.uuid}','_blank')">Retrieve</button>`;
+  }
+  if (node.type === 'jcl') {
+    html += `<button class="btn btn-primary" onclick="window.open('/jobchain/${node.label}','_blank')">Job Chain</button>`;
+    html += `<button class="btn" onclick="expandNode(currentNode)">Expand</button>`;
+  }
+  html += `</div>`;
+
+  // Details
+  html += `<div class="detail-section"><h3>Properties</h3>`;
+  const d = node.data;
+  if (d.start_line) html += row('Lines', `${d.start_line}-${d.end_line}`);
+  if (d.statement_count !== undefined) html += row('Statements', d.statement_count);
+  if (d.complexity !== undefined) html += row('Complexity', d.complexity);
+  if (d.program_type) html += row('Type', d.program_type.toUpperCase());
+  if (d.total_lines) html += row('Total lines', d.total_lines);
+  if (d.pic) html += row('PIC', d.pic);
+  if (d.usage) html += row('Usage', d.usage);
+  if (d.kind) html += row('Kind', d.kind);
+  if (d.predicate || d.predicate_raw) html += row('Predicate', (d.predicate || d.predicate_raw || '').slice(0, 60));
+  if (d.then_summary || d.then) html += row('Then', (d.then_summary || d.then || '').slice(0, 60));
+  if (d.operation) html += row('Operation', d.operation);
+  if (d.segment) html += row('Segment', d.segment);
+  if (d.queue) html += row('Queue', d.queue);
+  if (d.verb) html += row('CICS Verb', d.verb);
+  if (d.line) html += row('Line', d.line);
+  html += `</div>`;
+
+  // UUID
+  if (d.uuid || d.id) {
+    const uid = d.uuid || d.id;
+    html += `<div class="detail-section"><h3>UUID</h3>
+      <div class="uuid-val" onclick="copyUUID('${uid}')" style="word-break:break-all;cursor:pointer" title="Click to copy">
+        ${uid}
+      </div>
+      <button class="btn" style="margin-top:8px" onclick="window.open('/retrieve/${uid}','_blank')">Retrieve artifact</button>
+    </div>`;
+  }
+
+  // Connections summary
+  const outgoing = links.filter(l => (l.source.id || l.source) === node.id);
+  const incoming = links.filter(l => (l.target.id || l.target) === node.id);
+  if (outgoing.length || incoming.length) {
+    html += `<div class="detail-section"><h3>Connections</h3>`;
+    html += row('Outgoing edges', outgoing.length);
+    html += row('Incoming edges', incoming.length);
+    html += `</div>`;
+  }
+
+  content.innerHTML = html;
+  currentNode = node;
+}
+
+function row(label, val) {
+  return `<div class="detail-row"><span class="detail-label">${label}</span><span class="detail-val">${val}</span></div>`;
+}
+
+function copyUUID(uuid) {
+  navigator.clipboard.writeText(uuid).then(() => showToast('UUID copied: ' + uuid.slice(0,16) + '...'));
+}
+
+let currentNode = null;
+
+function toggleSidebar() {
+  sidebarVisible = !sidebarVisible;
+  document.getElementById('sidebar').classList.toggle('hidden', !sidebarVisible);
+  document.getElementById('canvas').classList.toggle('full', !sidebarVisible);
+  if (simulation) simulation.alpha(0.1).restart();
+}
+
+function resetZoom() {
+  svg.transition().duration(500).call(
+    zoom.transform,
+    d3.zoomIdentity.translate(
+      parseInt(svg.style('width'))/2,
+      parseInt(svg.style('height'))/2
+    ).scale(0.8)
+  );
+}
+
+function resetGraph() {
+  nodes.forEach(n => { n.fx = null; n.fy = null; });
+  simulation.alpha(0.5).restart();
+  showToast('Graph reset — all nodes unpinned');
+}
+
+let activeFilter = null;
+
+function filterType(type) {
+  if (activeFilter === type) {
+    clearFilter();
+    return;
+  }
+  activeFilter = type;
+
+  // Update legend styles
+  document.querySelectorAll('.leg[data-type]').forEach(el => {
+    if (el.dataset.type === type) {
+      el.classList.add('active');
+      el.classList.remove('dimmed');
+    } else {
+      el.classList.remove('active');
+      el.classList.add('dimmed');
+    }
+  });
+
+  // Update node opacity
+  nodesG.selectAll('.node').each(function(d) {
+    const isMatch = d.type === type;
+    const opacity = isMatch ? 1.0 : 0.08;
+    d3.select(this).attr('opacity', opacity);
+  });
+
+  // Update link opacity
+  linksG.selectAll('.link')
+    .attr('opacity', d => {
+      const sType = (typeof d.source === 'object' ? d.source.type : '') || '';
+      const tType = (typeof d.target === 'object' ? d.target.type : '') || '';
+      return (sType === type || tType === type) ? 0.7 : 0.05;
+    });
+
+  showToast(`Showing: ${type.toUpperCase()} nodes`);
+}
+
+function clearFilter() {
+  activeFilter = null;
+
+  document.querySelectorAll('.leg[data-type]').forEach(el => {
+    el.classList.remove('active', 'dimmed');
+  });
+
+  nodesG.selectAll('.node').attr('opacity', 1.0);
+  linksG.selectAll('.link').attr('opacity', 0.5);
+
+  showToast('Filter cleared');
+}
+
+function expandAll() {
+  nodes.forEach(n => { if (!expandedNodes.has(n.id)) expandNode(n); });
+}
+
+let zoom;
+
+function initGraph() {
+  svg  = d3.select('#graph');
+  zoomG = d3.select('#zoom-g');
+  linksG = d3.select('#links-g');
+  nodesG = d3.select('#nodes-g');
+
+  zoom = d3.zoom()
+    .scaleExtent([0.1, 4])
+    .on('zoom', e => zoomG.attr('transform', e.transform));
+
+  svg.call(zoom);
+
+  const w = document.getElementById('canvas').offsetWidth;
+  const h = document.getElementById('canvas').offsetHeight;
+
+  simulation = d3.forceSimulation()
+    .force('link', d3.forceLink().id(d => d.id).distance(d => {
+      if (d.type === 'cfg') return 80;
+      if (d.type === 'copy') return 120;
+      return 150;
+    }).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(-300))
+    .force('center', d3.forceCenter(w/2, h/2))
+    .force('collision', d3.forceCollide(30));
+
+  // Initial zoom
+  svg.call(zoom.transform, d3.zoomIdentity.translate(w/2, h/2).scale(0.8));
+}
+
+function updateGraph() {
+  document.getElementById('node-count').textContent = `${nodes.length} nodes`;
+  document.getElementById('edge-count').textContent = `${links.length} edges`;
+
+  // Links
+  const link = linksG.selectAll('.link').data(links, d => `${d.source.id||d.source}-${d.target.id||d.target}-${d.type}`);
+  link.enter().append('line')
+    .attr('class', d => `link link-${d.type}`)
+    .attr('stroke', d => linkColors[d.type] || '#64748b')
+    .attr('stroke-width', 1.5)
+    .attr('stroke-dasharray', d => d.type === 'cfg' ? '4,2' : 'none')
+    .attr('marker-end', 'url(#arr)')
+    .attr('opacity', 0.5);
+  link.exit().remove();
+
+  // Nodes
+  const nodeGroup = nodesG.selectAll('.node').data(nodes, d => d.id);
+
+  const nodeEnter = nodeGroup.enter().append('g')
+    .attr('class', 'node')
+    .call(d3.drag()
+      .on('start', dragStart)
+      .on('drag', dragged)
+      .on('end', dragEnd))
+    .on('click', (e, d) => {
+      e.stopPropagation();
+      selectNode(d);
+    })
+    .on('dblclick', (e, d) => {
+      e.stopPropagation();
+      expandNode(d);
+    });
+
+  nodeEnter.append('circle')
+    .attr('r', d => nodeRadius(d))
+    .attr('fill', d => nodeColors[d.type] || '#64748b')
+    .attr('stroke', '#0a0e1a')
+    .attr('stroke-width', 2)
+    .attr('opacity', 0.85);
+
+  // Expansion indicator ring
+  nodeEnter.append('circle')
+    .attr('class', 'expand-ring')
+    .attr('r', d => nodeRadius(d) + 4)
+    .attr('fill', 'none')
+    .attr('stroke', d => nodeColors[d.type] || '#64748b')
+    .attr('stroke-width', 1)
+    .attr('stroke-dasharray', '3,3')
+    .attr('opacity', 0.4);
+
+  nodeEnter.append('text')
+    .attr('dy', '0.35em')
+    .attr('text-anchor', 'middle')
+    .attr('font-size', 9)
+    .attr('fill', '#e2e8f0')
+    .text(d => d.label.length > 18 ? d.label.slice(0,16)+'..' : d.label);
+
+  nodeEnter.append('text')
+    .attr('class', 'sublabel')
+    .attr('dy', '1.5em')
+    .attr('text-anchor', 'middle')
+    .attr('font-size', 7)
+    .attr('fill', '#64748b')
+    .text(d => d.type.toUpperCase());
+
+  nodeGroup.exit().remove();
+
+  simulation.nodes(nodes).on('tick', ticked);
+  simulation.force('link').links(links);
+  simulation.alpha(0.3).restart();
+}
+
+function nodeRadius(d) {
+  if (d.type === 'program') return 18;
+  if (d.type === 'paragraph') return 12;
+  if (d.type === 'rule') return 10;
+  if (d.type === 'jcl') return 14;
+  return 10;
+}
+
+function ticked() {
+  linksG.selectAll('.link')
+    .attr('x1', d => d.source.x)
+    .attr('y1', d => d.source.y)
+    .attr('x2', d => d.target.x)
+    .attr('y2', d => d.target.y);
+
+  nodesG.selectAll('.node')
+    .attr('transform', d => `translate(${d.x},${d.y})`);
+}
+
+function dragStart(e, d) {
+  if (!e.active) simulation.alphaTarget(0.3).restart();
+  d.fx = d.x; d.fy = d.y;
+}
+function dragged(e, d) {
+  d.fx = e.x; d.fy = e.y;
+}
+function dragEnd(e, d) {
+  if (!e.active) simulation.alphaTarget(0);
+  // Keep node pinned where user dropped it
+  // d.fx and d.fy remain set — node stays fixed
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') toggleSidebar();
+  if (e.key === 'r') resetZoom();
+  if (e.key === 'e' && currentNode) expandNode(currentNode);
+});
+
+// Click background to deselect
+d3.select('#graph').on('click', () => {
+  document.getElementById('sidebar-title').textContent = 'SELECT A NODE';
+  document.getElementById('sidebar-content').innerHTML =
+    '<p style="color:#64748b;font-size:11px">Click any node to inspect its artifacts and connections.</p>';
+});
+
+// Init
+initGraph();
+loadProgram(PROGRAM);
+</script>
+</body>
+</html>

@@ -1553,7 +1553,7 @@ def get_explorer(program_name: str):
     Click nodes to inspect. Double-click to expand.
     """
     from pathlib import Path
-    template_path = Path(__file__).parent.parent.parent / "out" / "demo" / "explore_template.html"
+    template_path = Path(__file__).parent / "explore_template.html"
 
     if template_path.exists():
         html = template_path.read_text(encoding="utf-8")
