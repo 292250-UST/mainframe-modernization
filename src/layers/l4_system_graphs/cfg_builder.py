@@ -215,14 +215,6 @@ def run(corpus_dir: Optional[Path] = None) -> dict:
         rows = []
         for cfg in all_cfgs:
             prog = cfg["program"]
-            # Get program UUID
-            row = conn.execute("""
-                SELECT uuid FROM nodes
-                WHERE kind = 'ProgramNode'
-                AND UPPER(source_file) = UPPER(?)
-                LIMIT 1
-            """, [cfg["source_file"]]).fetchone()
-            # prog_uuid = row[0] if row else prog
             if nodes_exist:
                 row = conn.execute("""
                     SELECT uuid FROM nodes
